@@ -1608,3 +1608,84 @@ void handle_script_delete(struct mg_connection *c, struct mg_http_message *hm) {
         HTTP_OK(c, "{\"Code\":1,\"Error\":\"脚本删除失败\",\"Data\":null}");
     }
 }
+
+/* ==================== 插件存储 API ==================== */
+#include "plugin_storage.h"
+
+/* 从URL提取插件名 /api/plugins/storage/:name */
+static int extract_plugin_name_from_url(const char *uri, char *name, size_t size) {
+    const char *prefix = "/api/plugins/storage/";
+    const char *start = strstr(uri, prefix);
+    if (!start) return -1;
+    
+    start += strlen(prefix);
+    size_t i = 0;
+    while (start[i] && start[i] != '?' && start[i] != ' ' && i < size - 1) {
+        name[i] = start[i];
+        i++;
+    }
+    name[i] = '\0';
+    return (i > 0) ? 0 : -1;
+}
+
+/* GET /api/plugins/storage/:name - 读取插件存储 */
+void handle_plugin_storage_get(struct mg_connection *c, struct mg_http_message *hm) {
+    HTTP_CHECK_GET(c, hm);
+
+    char plugin_name[256] = {0};
+    if (extract_plugin_name_from_url(hm->uri.buf, plugin_name, sizeof(plugin_name)) != 0) {
+        HTTP_ERROR(c, 400, "无效的插件名称");
+        return;
+    }
+
+    char json_data[PLUGIN_STORAGE_MAX_SIZE + 256];
+    char storage_content[PLUGIN_STORAGE_MAX_SIZE];
+    
+    if (plugin_storage_read(plugin_name, storage_content, sizeof(storage_content)) == 0) {
+        snprintf(json_data, sizeof(json_data), 
+            "{\"Code\":0,\"Error\":\"\",\"Data\":%s}", storage_content);
+        HTTP_OK(c, json_data);
+    } else {
+        HTTP_OK(c, "{\"Code\":1,\"Error\":\"读取存储失败\",\"Data\":null}");
+    }
+}
+
+/* POST /api/plugins/storage/:name - 写入插件存储 */
+void handle_plugin_storage_set(struct mg_connection *c, struct mg_http_message *hm) {
+    HTTP_CHECK_POST(c, hm);
+
+    char plugin_name[256] = {0};
+    if (extract_plugin_name_from_url(hm->uri.buf, plugin_name, sizeof(plugin_name)) != 0) {
+        HTTP_ERROR(c, 400, "无效的插件名称");
+        return;
+    }
+
+    /* 直接使用请求体作为JSON数据存储 */
+    char json_data[PLUGIN_STORAGE_MAX_SIZE];
+    size_t len = hm->body.len < sizeof(json_data) - 1 ? hm->body.len : sizeof(json_data) - 1;
+    memcpy(json_data, hm->body.buf, len);
+    json_data[len] = '\0';
+
+    if (plugin_storage_write(plugin_name, json_data) == 0) {
+        HTTP_OK(c, "{\"Code\":0,\"Error\":\"\",\"Data\":\"存储成功\"}");
+    } else {
+        HTTP_OK(c, "{\"Code\":1,\"Error\":\"存储失败，可能超出大小限制(64KB)\",\"Data\":null}");
+    }
+}
+
+/* DELETE /api/plugins/storage/:name - 删除插件存储 */
+void handle_plugin_storage_delete(struct mg_connection *c, struct mg_http_message *hm) {
+    HTTP_CHECK_DELETE(c, hm);
+
+    char plugin_name[256] = {0};
+    if (extract_plugin_name_from_url(hm->uri.buf, plugin_name, sizeof(plugin_name)) != 0) {
+        HTTP_ERROR(c, 400, "无效的插件名称");
+        return;
+    }
+
+    if (plugin_storage_delete(plugin_name) == 0) {
+        HTTP_OK(c, "{\"Code\":0,\"Error\":\"\",\"Data\":\"删除成功\"}");
+    } else {
+        HTTP_OK(c, "{\"Code\":1,\"Error\":\"删除失败\",\"Data\":null}");
+    }
+}

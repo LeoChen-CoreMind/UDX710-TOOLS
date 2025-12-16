@@ -1,8 +1,9 @@
 <script setup>
-import { ref, computed, onMounted, inject, nextTick } from 'vue'
+import { ref, computed, onMounted, inject, nextTick, createApp, h } from 'vue'
+import { PluginCard, PluginStatus, PluginBtn } from './plugin'
 import { useToast } from '../composables/useToast'
 import { useConfirm } from '../composables/useConfirm'
-import { getPluginList, uploadPlugin, deletePlugin, deleteAllPlugins, executeShell, getScriptList, uploadScript, updateScript, deleteScript } from '../composables/useApi'
+import { getPluginList, uploadPlugin, deletePlugin, deleteAllPlugins, executeShell, getScriptList, uploadScript, updateScript, deleteScript, getPluginStorage, setPluginStorage, deletePluginStorage } from '../composables/useApi'
 
 const { success, error, info } = useToast()
 const { confirm } = useConfirm()
@@ -473,6 +474,12 @@ function handleScriptConfirm(result) {
   scriptConfirm.value.show = false
 }
 
+// 插件定时器追踪（用于自动清理）
+let pluginTimers = []
+
+// 当前运行的插件名称（用于storage API）
+let currentPluginName = ''
+
 // 插件API注入
 const pluginAPI = {
   shell: async (cmd) => {
@@ -502,6 +509,98 @@ const pluginAPI = {
     } catch (e) {
       return 'Error: ' + e.message
     }
+  },
+  // 定时器管理API - 自动追踪以便清理
+  $setInterval: (fn, ms) => {
+    const id = setInterval(fn, ms)
+    pluginTimers.push({ type: 'interval', id })
+    return id
+  },
+  $setTimeout: (fn, ms) => {
+    const id = setTimeout(fn, ms)
+    pluginTimers.push({ type: 'timeout', id })
+    return id
+  },
+  $clearInterval: (id) => {
+    clearInterval(id)
+    pluginTimers = pluginTimers.filter(t => !(t.type === 'interval' && t.id === id))
+  },
+  $clearTimeout: (id) => {
+    clearTimeout(id)
+    pluginTimers = pluginTimers.filter(t => !(t.type === 'timeout' && t.id === id))
+  },
+  // 持久化存储API
+  storage: {
+    // 获取存储值
+    async get(key, defaultValue = null) {
+      try {
+        const res = await getPluginStorage(currentPluginName)
+        if (res.Code === 0 && res.Data) {
+          return key in res.Data ? res.Data[key] : defaultValue
+        }
+        return defaultValue
+      } catch (e) {
+        console.error('Storage get error:', e)
+        return defaultValue
+      }
+    },
+    // 设置存储值
+    async set(key, value) {
+      try {
+        // 先获取现有数据
+        let data = {}
+        const res = await getPluginStorage(currentPluginName)
+        if (res.Code === 0 && res.Data) {
+          data = res.Data
+        }
+        // 更新指定key
+        data[key] = value
+        const saveRes = await setPluginStorage(currentPluginName, data)
+        return saveRes.Code === 0
+      } catch (e) {
+        console.error('Storage set error:', e)
+        return false
+      }
+    },
+    // 删除存储值
+    async remove(key) {
+      try {
+        const res = await getPluginStorage(currentPluginName)
+        if (res.Code === 0 && res.Data) {
+          const data = res.Data
+          delete data[key]
+          const saveRes = await setPluginStorage(currentPluginName, data)
+          return saveRes.Code === 0
+        }
+        return true
+      } catch (e) {
+        console.error('Storage remove error:', e)
+        return false
+      }
+    },
+    // 获取所有存储数据
+    async getAll() {
+      try {
+        const res = await getPluginStorage(currentPluginName)
+        if (res.Code === 0 && res.Data) {
+          return res.Data
+        }
+        return {}
+      } catch (e) {
+        console.error('Storage getAll error:', e)
+        return {}
+      }
+    },
+    // 清空所有存储数据
+    async clear() {
+      try {
+        const res = await deletePluginStorage(currentPluginName)
+        return res.Code === 0
+      } catch (e) {
+        console.error('Storage clear error:', e)
+        return false
+      }
+    }
   }
 }
 
@@ -509,8 +608,126 @@ const pluginAPI = {
 // 当前插件定义（用于双向绑定）
 let currentPluginDef = null
 
+// 插件组件实例（用于销毁时清理）
+let pluginAppInstance = null
+
 // 渲染插件模板
 function renderPluginTemplate(container, template, data) {
+  // 清理之前的Vue实例
+  if (pluginAppInstance) {
+    pluginAppInstance.unmount()
+    pluginAppInstance = null
+  }
+  
+  // 检测是否使用了plugin-xxx组件
+  const hasPluginComponents = /<plugin-(card|status|btn)/i.test(template)
+  
+  if (hasPluginComponents) {
+    // 使用Vue运行时编译渲染组件
+    renderWithVueComponents(container, template, data)
+  } else {
+    // 使用原有的简单HTML渲染
+    renderSimpleHtml(container, template, data)
+  }
+}
+
+// 使用Vue组件渲染模板
+function renderWithVueComponents(container, template, data) {
+  // 关键修复：直接将$api注入到pluginData.value，而不是创建新对象
+  // 这样v-model更新的就是pluginData.value本身，而不是副本
+  pluginData.value.$api = pluginAPI
+  
+  // 创建动态组件
+  const DynamicPlugin = {
+    template: template,
+    components: {
+      'plugin-card': PluginCard,
+      'plugin-status': PluginStatus,
+      'plugin-btn': PluginBtn
+    },
+    data() {
+      // 直接返回pluginData.value的引用，确保v-model更新的是同一个对象
+      return pluginData.value
+    },
+    methods: {
+      // 代理所有方法
+      ...Object.fromEntries(
+        Object.entries(data).filter(([k, v]) => typeof v === 'function').map(([k, v]) => [
+          k,
+          async function(...args) {
+            // 关键：从Vue组件实例(this)同步最新数据到pluginData.value
+            // 因为Vue的data()返回后会被reactive包装，this上的属性才是最新的
+            const dataKeys = Object.keys(pluginData.value).filter(k => 
+              k !== '$api' && typeof pluginData.value[k] !== 'function'
+            )
+            for (const key of dataKeys) {
+              if (this[key] !== undefined) {
+                pluginData.value[key] = this[key]
+              }
+            }
+            
+            // 构建正确的上下文对象
+            const context = {
+              $data: pluginData.value,
+              $api: pluginAPI,
+              $refresh: () => {
+                const container = document.getElementById('plugin-container')
+                if (container && currentPluginDef?.template) {
+                  renderPluginTemplate(container, currentPluginDef.template, pluginData.value)
+                }
+              }
+            }
+            // 将绑定后的方法也加入上下文
+            if (currentPluginDef?.methods) {
+              for (const methodName in currentPluginDef.methods) {
+                if (pluginData.value[methodName]) {
+                  context[methodName] = pluginData.value[methodName]
+                }
+              }
+            }
+            
+            // 使用正确的上下文调用原始方法
+            const result = await v.apply(context, args)
+            if (result !== undefined) {
+              pluginOutput.value = typeof result === 'string' ? result : JSON.stringify(result, null, 2)
+            }
+            return result
+          }
+        ])
+      ),
+      // 添加$refresh方法
+      $refresh() {
+        // 同步当前数据后重新渲染
+        for (const key in pluginData.value) {
+          if (typeof this[key] !== 'function' && this[key] !== undefined && key !== '$api') {
+            pluginData.value[key] = this[key]
+          }
+        }
+        const container = document.getElementById('plugin-container')
+        if (container && currentPluginDef?.template) {
+          renderPluginTemplate(container, currentPluginDef.template, pluginData.value)
+        }
+      }
+    },
+    mounted() {
+      // 同步初始数据（排除$api）
+      const syncData = { ...this.$data }
+      delete syncData.$api
+      Object.assign(pluginData.value, syncData)
+    }
+  }
+  
+  // 创建并挂载Vue应用
+  container.innerHTML = ''
+  pluginAppInstance = createApp(DynamicPlugin)
+  pluginAppInstance.component('plugin-card', PluginCard)
+  pluginAppInstance.component('plugin-status', PluginStatus)
+  pluginAppInstance.component('plugin-btn', PluginBtn)
+  pluginAppInstance.mount(container)
+}
+
+// 简单HTML渲染（原有逻辑）
+function renderSimpleHtml(container, template, data) {
   let html = template
   for (const key in data) {
     if (typeof data[key] !== 'function') {
@@ -564,6 +781,8 @@ async function runPlugin(plugin) {
   pluginOutput.value = ''
   pluginData.value = {}
   currentPluginDef = null
+  // 设置当前插件名称（用于storage API）
+  currentPluginName = plugin.filename ? plugin.filename.replace('.js', '') : plugin.name
   showPluginModal.value = true
   
   await nextTick()
@@ -636,8 +855,56 @@ async function runPlugin(plugin) {
 }
 
 function closePluginModal() {
+  // 1. 调用 destroyed 生命周期钩子
+  if (currentPluginDef?.destroyed) {
+    try {
+      const destroyedContext = {
+        $data: pluginData.value,
+        $api: pluginAPI,
+        $refresh: () => {
+          const container = document.getElementById('plugin-container')
+          if (container && currentPluginDef?.template) {
+            renderPluginTemplate(container, currentPluginDef.template, pluginData.value)
+          }
+        }
+      }
+      // 将方法也加入上下文
+      if (currentPluginDef.methods) {
+        for (const key in currentPluginDef.methods) {
+          if (pluginData.value[key]) {
+            destroyedContext[key] = pluginData.value[key]
+          }
+        }
+      }
+      currentPluginDef.destroyed.call(destroyedContext)
+    } catch (e) {
+      console.error('Plugin destroyed hook error:', e)
+    }
+  }
+  
+  // 2. 自动清理所有定时器
+  pluginTimers.forEach(t => {
+    if (t.type === 'interval') {
+      clearInterval(t.id)
+    } else {
+      clearTimeout(t.id)
+    }
+  })
+  pluginTimers = []
+  
+  // 3. 清理Vue组件实例
+  if (pluginAppInstance) {
+    pluginAppInstance.unmount()
+    pluginAppInstance = null
+  }
+  
+  // 4. 重置状态
   showPluginModal.value = false
   currentPlugin.value = null
+  currentPluginDef = null
+  currentPluginName = ''
+  pluginData.value = {}
+  pluginOutput.value = ''
 }
 
 onMounted(() => {

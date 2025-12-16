@@ -23,7 +23,7 @@ HANDLER_SRCS = handlers/http_server.c handlers/handlers.c
 SYSTEM_SRCS = system/sysinfo.c system/modem.c system/airplane.c system/ofono.c \
               system/dbus_core.c system/exec_utils.c system/advanced.c \
               system/traffic.c system/reboot.c system/charge.c system/sms.c system/update.c \
-              system/usb_mode.c system/plugin.c
+              system/usb_mode.c system/plugin.c system/plugin_storage.c
 SRCS = $(MAIN_SRCS) $(HANDLER_SRCS) $(SYSTEM_SRCS)
 OBJS = $(BUILD_DIR)/main.o $(BUILD_DIR)/mongoose.o $(BUILD_DIR)/packed_fs.o \
        $(BUILD_DIR)/http_server.o $(BUILD_DIR)/handlers.o \
@@ -31,7 +31,7 @@ OBJS = $(BUILD_DIR)/main.o $(BUILD_DIR)/mongoose.o $(BUILD_DIR)/packed_fs.o \
        $(BUILD_DIR)/ofono.o $(BUILD_DIR)/dbus_core.o $(BUILD_DIR)/exec_utils.o \
        $(BUILD_DIR)/advanced.o $(BUILD_DIR)/traffic.o $(BUILD_DIR)/reboot.o \
        $(BUILD_DIR)/charge.o $(BUILD_DIR)/sms.o $(BUILD_DIR)/update.o $(BUILD_DIR)/usb_mode.o \
-       $(BUILD_DIR)/plugin.o
+       $(BUILD_DIR)/plugin.o $(BUILD_DIR)/plugin_storage.o
 
 .PHONY: all clean
 
@@ -100,6 +100,9 @@ $(BUILD_DIR)/usb_mode.o: system/usb_mode.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) $(INCLUDES) -c -o $@ $<
 
 $(BUILD_DIR)/plugin.o: system/plugin.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) $(INCLUDES) -c -o $@ $<
+
+$(BUILD_DIR)/plugin_storage.o: system/plugin_storage.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) $(INCLUDES) -c -o $@ $<
 
 $(BUILD_DIR):

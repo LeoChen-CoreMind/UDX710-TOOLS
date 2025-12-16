@@ -335,6 +335,28 @@ export async function deleteAllPlugins() {
   })
 }
 
+// ==================== 插件存储API ====================
+
+// 获取插件存储数据
+export async function getPluginStorage(pluginName) {
+  return request(`/api/plugins/storage/${encodeURIComponent(pluginName)}`)
+}
+
+// 设置插件存储数据
+export async function setPluginStorage(pluginName, data) {
+  return request(`/api/plugins/storage/${encodeURIComponent(pluginName)}`, {
+    method: 'POST',
+    body: JSON.stringify(data)
+  })
+}
+
+// 删除插件存储数据
+export async function deletePluginStorage(pluginName) {
+  return request(`/api/plugins/storage/${encodeURIComponent(pluginName)}`, {
+    method: 'DELETE'
+  })
+}
+
 
 // ==================== 脚本管理API ====================
 

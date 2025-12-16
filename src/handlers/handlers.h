@@ -69,6 +69,11 @@ void handle_script_upload(struct mg_connection *c, struct mg_http_message *hm);
 void handle_script_update(struct mg_connection *c, struct mg_http_message *hm);
 void handle_script_delete(struct mg_connection *c, struct mg_http_message *hm);
 
+/* 插件存储 API */
+void handle_plugin_storage_get(struct mg_connection *c, struct mg_http_message *hm);
+void handle_plugin_storage_set(struct mg_connection *c, struct mg_http_message *hm);
+void handle_plugin_storage_delete(struct mg_connection *c, struct mg_http_message *hm);
+
 #ifdef __cplusplus
 }
 #endif

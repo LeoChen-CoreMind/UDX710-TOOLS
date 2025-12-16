@@ -248,6 +248,18 @@ static void http_handler(struct mg_connection *c, int ev, void *ev_data) {
                 handle_script_delete(c, hm);
             }
         }
+        /* 插件存储 API */
+        else if (mg_match(hm->uri, mg_str("/api/plugins/storage/*"), NULL)) {
+            if (hm->method.len == 3 && memcmp(hm->method.buf, "GET", 3) == 0) {
+                handle_plugin_storage_get(c, hm);
+            } else if (hm->method.len == 4 && memcmp(hm->method.buf, "POST", 4) == 0) {
+                handle_plugin_storage_set(c, hm);
+            } else if (hm->method.len == 6 && memcmp(hm->method.buf, "DELETE", 6) == 0) {
+                handle_plugin_storage_delete(c, hm);
+            } else {
+                HTTP_ERROR(c, 405, "Method not allowed");
+            }
+        }
         /* 未知 API 路由 */
         else {
             HTTP_ERROR(c, 404, "Endpoint not found");
