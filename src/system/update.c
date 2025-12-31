@@ -11,6 +11,7 @@
 #include <sys/wait.h>
 #include "update.h"
 #include "exec_utils.h"
+#include "mongoose.h"
 
 /* 获取当前版本 */
 const char* update_get_version(void) {
@@ -101,7 +102,7 @@ void update_cleanup(void) {
     run_command(output, sizeof(output), "rm", "-rf", UPDATE_EXTRACT_DIR, NULL);
 }
 
-/* 检查远程版本 - 简单实现，解析JSON响应 */
+/* 检查远程版本 - 使用mongoose JSON API解析响应 */
 int update_check_version(const char *check_url, update_info_t *info) {
     char output[4096];
     
@@ -120,80 +121,37 @@ int update_check_version(const char *check_url, update_info_t *info) {
         }
     }
     
-    /* 简单JSON解析 - 提取version字段 */
-    char *p = strstr(output, "\"version\"");
-    if (p) {
-        p = strchr(p, ':');
-        if (p) {
-            p = strchr(p, '"');
-            if (p) {
-                p++;
-                char *end = strchr(p, '"');
-                if (end) {
-                    size_t len = end - p;
-                    if (len < sizeof(info->version)) {
-                        memcpy(info->version, p, len);
-                    }
-                }
-            }
-        }
+    /* 使用mongoose JSON API解析 */
+    struct mg_str json = mg_str(output);
+    
+    /* 提取version字段 */
+    char *version = mg_json_get_str(json, "$.version");
+    if (version) {
+        strncpy(info->version, version, sizeof(info->version) - 1);
+        free(version);
     }
     
     /* 提取url字段 */
-    p = strstr(output, "\"url\"");
-    if (p) {
-        p = strchr(p, ':');
-        if (p) {
-            p = strchr(p, '"');
-            if (p) {
-                p++;
-                char *end = strchr(p, '"');
-                if (end) {
-                    size_t len = end - p;
-                    if (len < sizeof(info->url)) {
-                        memcpy(info->url, p, len);
-                    }
-                }
-            }
-        }
+    char *url = mg_json_get_str(json, "$.url");
+    if (url) {
+        strncpy(info->url, url, sizeof(info->url) - 1);
+        free(url);
     }
     
     /* 提取changelog字段 */
-    p = strstr(output, "\"changelog\"");
-    if (p) {
-        p = strchr(p, ':');
-        if (p) {
-            p = strchr(p, '"');
-            if (p) {
-                p++;
-                char *end = strchr(p, '"');
-                if (end) {
-                    size_t len = end - p;
-                    if (len < sizeof(info->changelog)) {
-                        memcpy(info->changelog, p, len);
-                    }
-                }
-            }
-        }
+    char *changelog = mg_json_get_str(json, "$.changelog");
+    if (changelog) {
+        strncpy(info->changelog, changelog, sizeof(info->changelog) - 1);
+        free(changelog);
     }
     
     /* 提取size字段 */
-    p = strstr(output, "\"size\"");
-    if (p) {
-        p = strchr(p, ':');
-        if (p) {
-            while (*p && (*p == ':' || *p == ' ')) p++;
-            info->size = (size_t)atol(p);
-        }
-    }
+    info->size = (size_t)mg_json_get_long(json, "$.size", 0);
     
     /* 提取required字段 */
-    p = strstr(output, "\"required\"");
-    if (p) {
-        if (strstr(p, "true")) {
-            info->required = 1;
-        }
-    }
+    bool required = false;
+    mg_json_get_bool(json, "$.required", &required);
+    info->required = required ? 1 : 0;
     
     if (strlen(info->version) == 0) {
         return -1;

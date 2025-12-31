@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useConfirm } from '../composables/useConfirm'
 import { authFetch } from '../composables/useApi'
@@ -134,19 +134,27 @@ async function fetchSmsFixStatus() {
 
 async function toggleSmsFix() {
   smsFixLoading.value = true
+  const newValue = smsFixEnabled.value  // v-model 已经更新了值
+  console.log('[SMS Fix] 设置为:', newValue)
   try {
     const res = await authFetch('/api/sms/fix', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ enabled: !smsFixEnabled.value })
+      body: JSON.stringify({ enabled: newValue })
     })
     const result = await res.json()
+    console.log('[SMS Fix] API返回:', result)
     if (result.status === 'success') {
-      smsFixEnabled.value = result.enabled
       showStatus(true, result.message)
     } else {
+      // 失败时回滚
+      smsFixEnabled.value = !newValue
       showStatus(false, result.error || '设置失败')
     }
-  } catch (e) { showStatus(false, '设置失败') }
+  } catch (e) { 
+    console.error('[SMS Fix] 错误:', e)
+    smsFixEnabled.value = !newValue  // 回滚
+    showStatus(false, '设置失败') 
+  }
   finally { smsFixLoading.value = false }
 }
 
@@ -156,6 +164,16 @@ onMounted(() => {
   refreshTimer = setInterval(() => { fetchSmsList(); fetchSentList() }, 10000)
 })
 onUnmounted(() => { if (refreshTimer) clearInterval(refreshTimer) })
+
+// 监听Tab切换，进入配置页时刷新状态
+watch(activeTab, (newTab) => {
+  if (newTab === 'config') {
+    fetchSmsConfig()
+    fetchSmsFixStatus()
+  } else if (newTab === 'forward') {
+    fetchWebhookConfig()
+  }
+})
 
 function formatTime(timestamp, full = false) {
   const date = new Date(typeof timestamp === 'number' ? timestamp * 1000 : timestamp)
@@ -469,12 +487,10 @@ async function saveSmsConfig() {
                 <p class="text-slate-500 dark:text-white/40 text-xs">{{ t('sms.smsReceiveFixDesc') }}</p>
               </div>
             </div>
-            <button @click="toggleSmsFix" :disabled="smsFixLoading" 
-              class="px-3 py-2 rounded-xl transition-all border"
-              :class="smsFixEnabled ? 'bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 border-emerald-500/30 hover:bg-emerald-500/30' : 'bg-slate-100 dark:bg-white/10 text-slate-600 dark:text-white/60 border-slate-200 dark:border-white/10 hover:bg-slate-200 dark:hover:bg-white/20'"
-              :title="smsFixEnabled ? t('sms.enabled') : t('sms.disabled')">
-              <i :class="smsFixLoading ? 'fas fa-spinner animate-spin' : (smsFixEnabled ? 'fas fa-check' : 'fas fa-times')"></i>
-            </button>
+                        <label class="relative inline-flex items-center cursor-pointer">
+              <input type="checkbox" v-model="smsFixEnabled" @change="toggleSmsFix" :disabled="smsFixLoading" class="sr-only peer" />
+              <div class="w-14 h-7 bg-slate-200 dark:bg-white/10 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-0.5 after:left-[4px] after:bg-white after:rounded-full after:h-6 after:w-6 after:transition-all peer-checked:bg-emerald-500"></div>
+            </label>
           </div>
         </div>
       </div>

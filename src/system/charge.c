@@ -19,6 +19,7 @@
 #include "charge.h"
 #include "database.h"  /* 使用数据库配置函数 */
 #include "http_utils.h"
+#include "json_builder.h"
 
 #define BATTERY_UEVENT "/sys/class/power_supply/battery/uevent"
 #define BATTERY_STOP_CHARGE "/sys/class/power_supply/battery/charger.0/stop_charge"
@@ -316,21 +317,33 @@ void handle_charge_config(struct mg_connection *c, struct mg_http_message *hm) {
         ChargeConfig cfg = charge_config;
         pthread_mutex_unlock(&charge_mutex);
 
-        char json[1024];
-        snprintf(json, sizeof(json),
-            "{\"Code\":0,\"Error\":\"\",\"Data\":{"
-            "\"config\":{\"enabled\":%s,\"startThreshold\":%d,\"stopThreshold\":%d},"
-            "\"battery\":{\"capacity\":%d,\"charging\":%s,\"status\":\"%s\","
-            "\"health\":\"%s\",\"temperature\":%.1f,\"voltage\":%.6f,\"current\":%.6f}"
-            "}}",
-            cfg.enabled ? "true" : "false", cfg.start_threshold, cfg.stop_threshold,
-            battery.capacity, strcmp(battery.status, "Charging") == 0 ? "true" : "false",
-            battery.status, battery.health,
-            (double)battery.temperature / 10.0,
-            (double)battery.voltage_now / 1000000.0,
-            (double)battery.current_now / 1000000.0);
-
-        HTTP_OK(c, json);
+        JsonBuilder *j = json_new();
+        json_obj_open(j);
+        json_add_int(j, "Code", 0);
+        json_add_str(j, "Error", "");
+        json_key_obj_open(j, "Data");
+        
+        /* config对象 */
+        json_key_obj_open(j, "config");
+        json_add_bool(j, "enabled", cfg.enabled);
+        json_add_int(j, "startThreshold", cfg.start_threshold);
+        json_add_int(j, "stopThreshold", cfg.stop_threshold);
+        json_obj_close(j);
+        
+        /* battery对象 */
+        json_key_obj_open(j, "battery");
+        json_add_int(j, "capacity", battery.capacity);
+        json_add_bool(j, "charging", strcmp(battery.status, "Charging") == 0);
+        json_add_str(j, "status", battery.status);
+        json_add_str(j, "health", battery.health);
+        json_add_double(j, "temperature", (double)battery.temperature / 10.0);
+        json_add_double(j, "voltage", (double)battery.voltage_now / 1000000.0);
+        json_add_double(j, "current", (double)battery.current_now / 1000000.0);
+        json_obj_close(j);
+        
+        json_obj_close(j);
+        json_obj_close(j);
+        HTTP_OK_FREE(c, json_finish(j));
     } else if (http_is_method(hm, "POST")) {
         /* POST - 设置配置 */
         int enabled = 0, start = 20, stop = 80;
@@ -344,7 +357,13 @@ void handle_charge_config(struct mg_connection *c, struct mg_http_message *hm) {
 
         /* 验证阈值 */
         if (enabled && (start < 0 || start > 100 || stop < 0 || stop > 100 || start >= stop)) {
-            HTTP_OK(c, "{\"Code\":1,\"Error\":\"无效的阈值设置\",\"Data\":null}");
+            JsonBuilder *j = json_new();
+            json_obj_open(j);
+            json_add_int(j, "Code", 1);
+            json_add_str(j, "Error", "无效的阈值设置");
+            json_add_null(j, "Data");
+            json_obj_close(j);
+            HTTP_OK_FREE(c, json_finish(j));
             return;
         }
 
@@ -364,7 +383,13 @@ void handle_charge_config(struct mg_connection *c, struct mg_http_message *hm) {
             stop_charge_monitor();
         }
 
-        HTTP_OK(c, "{\"Code\":0,\"Error\":\"\",\"Data\":\"充电配置已更新\"}");
+        JsonBuilder *j = json_new();
+        json_obj_open(j);
+        json_add_int(j, "Code", 0);
+        json_add_str(j, "Error", "");
+        json_add_str(j, "Data", "充电配置已更新");
+        json_obj_close(j);
+        HTTP_OK_FREE(c, json_finish(j));
     }
 }
 
@@ -372,24 +397,42 @@ void handle_charge_config(struct mg_connection *c, struct mg_http_message *hm) {
 void handle_charge_on(struct mg_connection *c, struct mg_http_message *hm) {
     HTTP_CHECK_POST(c, hm);
 
+    JsonBuilder *j = json_new();
+    json_obj_open(j);
+    
     if (set_charging(1) != 0) {
-        HTTP_OK(c, "{\"Code\":1,\"Error\":\"开启充电失败\",\"Data\":null}");
-        return;
+        json_add_int(j, "Code", 1);
+        json_add_str(j, "Error", "开启充电失败");
+        json_add_null(j, "Data");
+    } else {
+        json_add_int(j, "Code", 0);
+        json_add_str(j, "Error", "");
+        json_add_str(j, "Data", "已开启充电");
     }
-
-    HTTP_OK(c, "{\"Code\":0,\"Error\":\"\",\"Data\":\"已开启充电\"}");
+    
+    json_obj_close(j);
+    HTTP_OK_FREE(c, json_finish(j));
 }
 
 /* POST /api/charge/off - 手动停止充电 */
 void handle_charge_off(struct mg_connection *c, struct mg_http_message *hm) {
     HTTP_CHECK_POST(c, hm);
 
+    JsonBuilder *j = json_new();
+    json_obj_open(j);
+    
     if (set_charging(0) != 0) {
-        HTTP_OK(c, "{\"Code\":1,\"Error\":\"停止充电失败\",\"Data\":null}");
-        return;
+        json_add_int(j, "Code", 1);
+        json_add_str(j, "Error", "停止充电失败");
+        json_add_null(j, "Data");
+    } else {
+        json_add_int(j, "Code", 0);
+        json_add_str(j, "Error", "");
+        json_add_str(j, "Data", "已停止充电");
     }
-
-    HTTP_OK(c, "{\"Code\":0,\"Error\":\"\",\"Data\":\"已停止充电\"}");
+    
+    json_obj_close(j);
+    HTTP_OK_FREE(c, json_finish(j));
 }
 
 

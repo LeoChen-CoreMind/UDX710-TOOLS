@@ -10,7 +10,9 @@
 #include <sys/stat.h>
 #include <unistd.h>
 #include <errno.h>
+#include "mongoose.h"
 #include "plugin.h"
+#include "lib/json_builder.h"
 
 /* 危险命令黑名单 */
 static const char *dangerous_commands[] = {
@@ -87,27 +89,6 @@ int execute_shell(const char *cmd, char *output, size_t size) {
 }
 
 
-/* JSON字符串转义 */
-static void json_escape(const char *src, char *dst, size_t dst_size) {
-    size_t j = 0;
-    for (size_t i = 0; src[i] && j < dst_size - 2; i++) {
-        char c = src[i];
-        switch (c) {
-            case '"':  if (j + 2 < dst_size) { dst[j++] = '\\'; dst[j++] = '"'; } break;
-            case '\\': if (j + 2 < dst_size) { dst[j++] = '\\'; dst[j++] = '\\'; } break;
-            case '\n': if (j + 2 < dst_size) { dst[j++] = '\\'; dst[j++] = 'n'; } break;
-            case '\r': if (j + 2 < dst_size) { dst[j++] = '\\'; dst[j++] = 'r'; } break;
-            case '\t': if (j + 2 < dst_size) { dst[j++] = '\\'; dst[j++] = 't'; } break;
-            default:
-                if ((unsigned char)c >= 0x20) {
-                    dst[j++] = c;
-                }
-                break;
-        }
-    }
-    dst[j] = '\0';
-}
-
 /* 从插件内容中提取元信息 */
 static int extract_plugin_meta(const char *content, char *name, char *version, 
                                 char *author, char *description, char *icon, char *color) {
@@ -158,10 +139,16 @@ int get_plugin_list(char *json_output, size_t size) {
         return 0;
     }
 
-    int offset = 0;
-    int count = 0;
-    offset += snprintf(json_output + offset, size - offset, "[");
+    JsonBuilder *j = json_new();
+    if (!j) {
+        closedir(dir);
+        snprintf(json_output, size, "[]");
+        return 0;
+    }
 
+    json_arr_open(j, NULL);
+
+    int count = 0;
     struct dirent *entry;
     while ((entry = readdir(dir)) != NULL && count < PLUGIN_MAX_COUNT) {
         /* 只处理.js文件 */
@@ -198,27 +185,33 @@ int get_plugin_list(char *json_output, size_t size) {
         char name[128], version[32], author[64], description[256], icon[64], color[128];
         extract_plugin_meta(content, name, version, author, description, icon, color);
 
-        /* 转义内容 */
-        char *escaped_content = malloc(fsize * 2 + 1);
-        if (escaped_content) {
-            json_escape(content, escaped_content, fsize * 2 + 1);
+        /* 使用JsonBuilder构建插件对象 */
+        json_arr_obj_open(j);
+        json_add_str(j, "filename", entry->d_name);
+        json_add_str(j, "name", name);
+        json_add_str(j, "version", version);
+        json_add_str(j, "author", author);
+        json_add_str(j, "description", description);
+        json_add_str(j, "icon", icon);
+        json_add_str(j, "color", color);
+        json_add_str(j, "content", content);
+        json_obj_close(j);
 
-            /* 添加到JSON数组 */
-            offset += snprintf(json_output + offset, size - offset,
-                "%s{\"filename\":\"%s\",\"name\":\"%s\",\"version\":\"%s\","
-                "\"author\":\"%s\",\"description\":\"%s\",\"icon\":\"%s\","
-                "\"color\":\"%s\",\"content\":\"%s\"}",
-                count > 0 ? "," : "",
-                entry->d_name, name, version, author, description, icon, color, escaped_content);
-
-            free(escaped_content);
-            count++;
-        }
         free(content);
+        count++;
     }
 
     closedir(dir);
-    offset += snprintf(json_output + offset, size - offset, "]");
+    json_arr_close(j);
+
+    char *result = json_finish(j);
+    if (result) {
+        strncpy(json_output, result, size - 1);
+        json_output[size - 1] = '\0';
+        free(result);
+    } else {
+        snprintf(json_output, size, "[]");
+    }
 
     return count;
 }

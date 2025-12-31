@@ -43,66 +43,6 @@ static void on_ofono_appeared(GDBusConnection *conn, const gchar *name, const gc
 static void on_ofono_vanished(GDBusConnection *conn, const gchar *name, gpointer user_data);
 static void apply_sms_fix_on_init(void);
 
-/* JSON解析辅助函数 - 解析JSON字符串值，处理转义字符 */
-static int parse_json_string(const char *json, const char *key, char *out, size_t out_size) {
-    char search_key[128];
-    snprintf(search_key, sizeof(search_key), "\"%s\":\"", key);
-    
-    const char *start = strstr(json, search_key);
-    if (!start) return -1;
-    
-    start += strlen(search_key);
-    size_t i = 0;
-    
-    while (*start && i < out_size - 1) {
-        if (*start == '\\' && *(start + 1)) {
-            /* 处理转义字符 */
-            start++;
-            switch (*start) {
-                case 'n': out[i++] = '\n'; break;
-                case 'r': out[i++] = '\r'; break;
-                case 't': out[i++] = '\t'; break;
-                case 'b': out[i++] = '\b'; break;
-                case 'f': out[i++] = '\f'; break;
-                case '"': out[i++] = '"'; break;
-                case '\\': out[i++] = '\\'; break;
-                case '/': out[i++] = '/'; break;  /* JSON标准支持 \/ */
-                case 'u': 
-                    /* 跳过Unicode转义 \uXXXX */
-                    if (*(start+1) && *(start+2) && *(start+3) && *(start+4)) {
-                        start += 4;  /* 跳过4个hex字符，外层会再+1跳过'u' */
-                        out[i++] = '?';  /* 简单替换为? */
-                    }
-                    break;
-                default: out[i++] = *start; break;
-            }
-            start++;
-        } else if (*start == '"') {
-            /* 未转义的引号表示字符串结束 */
-            break;
-        } else {
-            out[i++] = *start;
-            start++;
-        }
-    }
-    out[i] = '\0';
-    return 0;
-}
-
-/* JSON解析辅助函数 - 解析JSON数字值 */
-static long parse_json_number(const char *json, const char *key) {
-    char search_key[128];
-    snprintf(search_key, sizeof(search_key), "\"%s\":", key);
-    
-    const char *start = strstr(json, search_key);
-    if (!start) return 0;
-    
-    start += strlen(search_key);
-    while (*start == ' ') start++;
-    
-    return atol(start);
-}
-
 /* Hex解码函数 - 将hex字符串解码为原始字节 */
 static void hex_decode(const char *hex, char *out, size_t out_size) {
     size_t i = 0, j = 0;

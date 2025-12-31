@@ -24,6 +24,11 @@
 #define AT_COMMAND_TIMEOUT  8000  /* 8秒超时 (毫秒) */
 #define MAX_RETRIES         1
 
+/* ==================== 前向声明 ==================== */
+int ofono_start_data_monitor(void);
+void ofono_stop_data_monitor(void);
+int ofono_is_data_monitor_running(void);
+
 /* ==================== 全局变量 ==================== */
 static GDBusConnection *g_dbus_conn = NULL;
 static GDBusProxy *g_modem_proxy = NULL;
@@ -775,6 +780,20 @@ int ofono_set_data_status(int active) {
 
     g_variant_unref(result);
     g_object_unref(proxy);
+
+    /* 根据数据连接状态控制监听 */
+    if (active) {
+        /* 开启数据连接时启动监听 */
+        if (!ofono_is_data_monitor_running()) {
+            ofono_start_data_monitor();
+        }
+    } else {
+        /* 关闭数据连接时停止监听 */
+        if (ofono_is_data_monitor_running()) {
+            ofono_stop_data_monitor();
+        }
+    }
+
     return 0;
 }
 
@@ -1234,6 +1253,92 @@ int ofono_get_serving_cell_tech(char *tech, int size) {
     return ret;
 }
 
+/**
+ * 获取服务小区信息（Technology和Band）
+ * @param tech 网络类型输出缓冲区（如 "nr", "lte"）
+ * @param tech_size 缓冲区大小
+ * @param band 频段输出缓冲区（如 "41", "78"）
+ * @param band_size 缓冲区大小
+ * @return 0 成功, 负数 失败
+ */
+int ofono_get_serving_cell_info(char *tech, int tech_size, int *band) {
+    GError *error = NULL;
+    GVariant *result = NULL;
+    GDBusProxy *proxy = NULL;
+    int ret = -1;
+
+    if (!tech || tech_size <= 0 || !band || !ensure_connection()) {
+        return -1;
+    }
+
+    tech[0] = '\0';
+    *band = 0;
+
+    /* 创建 NetworkMonitor 代理 */
+    proxy = g_dbus_proxy_new_sync(
+        g_dbus_conn, G_DBUS_PROXY_FLAGS_NONE, NULL,
+        OFONO_SERVICE, DEFAULT_MODEM_PATH, OFONO_NETWORK_MONITOR,
+        NULL, &error
+    );
+
+    if (!proxy) {
+        if (error) g_error_free(error);
+        return -2;
+    }
+
+    /* 调用 GetServingCellInformation */
+    result = g_dbus_proxy_call_sync(
+        proxy, "GetServingCellInformation", NULL,
+        G_DBUS_CALL_FLAGS_NONE, OFONO_TIMEOUT_MS, NULL, &error
+    );
+
+    if (!result) {
+        if (error) g_error_free(error);
+        g_object_unref(proxy);
+        return -3;
+    }
+
+    /* 解析返回的 a{sv} 字典 */
+    GVariant *props = g_variant_get_child_value(result, 0);
+    if (props) {
+        GVariantIter iter;
+        const gchar *key;
+        GVariant *value;
+        int got_tech = 0, got_band = 0;
+
+        g_variant_iter_init(&iter, props);
+        while (g_variant_iter_next(&iter, "{&sv}", &key, &value)) {
+            if (g_strcmp0(key, "Technology") == 0) {
+                const gchar *tech_str = g_variant_get_string(value, NULL);
+                if (tech_str) {
+                    strncpy(tech, tech_str, tech_size - 1);
+                    tech[tech_size - 1] = '\0';
+                    got_tech = 1;
+                }
+            } else if (g_strcmp0(key, "Band") == 0) {
+                /* Band 可能是 int32 或 uint32 */
+                if (g_variant_is_of_type(value, G_VARIANT_TYPE_INT32)) {
+                    *band = g_variant_get_int32(value);
+                    got_band = 1;
+                } else if (g_variant_is_of_type(value, G_VARIANT_TYPE_UINT32)) {
+                    *band = (int)g_variant_get_uint32(value);
+                    got_band = 1;
+                }
+            }
+            g_variant_unref(value);
+            
+            if (got_tech && got_band) break;
+        }
+        g_variant_unref(props);
+        
+        if (got_tech) ret = 0;
+    }
+
+    g_variant_unref(result);
+    g_object_unref(proxy);
+    return ret;
+}
+
 
 /* ==================== 数据连接 Watchdog 实现 ==================== */
 
@@ -1474,3 +1579,459 @@ void ofono_stop_data_watchdog(void) {
 int ofono_is_watchdog_running(void) {
     return g_watchdog_running ? 1 : 0;
 }
+
+/* ==================== 数据连接监听实现 (DBus 信号驱动) ==================== */
+
+static guint g_context_signal_id = 0;      /* ConnectionContext 信号订阅 ID */
+static guint g_network_signal_id = 0;      /* NetworkRegistration 信号订阅 ID */
+static guint g_manager_signal_id = 0;      /* Manager 信号订阅 ID (监听切卡) */
+static guint g_ofono_monitor_watch_id = 0; /* oFono 服务监控 ID */
+static volatile int g_data_monitor_running = 0;
+static GDBusConnection *g_monitor_dbus_conn = NULL;
+static guint g_restore_timeout_id = 0;     /* 延迟恢复定时器 ID */
+
+/* 前向声明 */
+static void subscribe_data_monitor_signals(void);
+static void unsubscribe_data_monitor_signals(void);
+
+/**
+ * 延迟恢复数据连接的回调函数
+ */
+static gboolean delayed_restore_data(gpointer user_data) {
+    (void)user_data;
+    
+    g_restore_timeout_id = 0;  /* 清除定时器 ID */
+    
+    char result[256];
+    if (ofono_check_and_restore_data(result, sizeof(result)) >= 0) {
+        printf("[DataMonitor] 恢复结果: %s\n", result);
+    }
+    
+    return G_SOURCE_REMOVE;  /* 只执行一次 */
+}
+
+/**
+ * ConnectionContext PropertyChanged 信号回调
+ * 监听 Active 属性变化，断开时尝试重连
+ */
+static void on_context_property_changed(GDBusConnection *conn, const gchar *sender_name,
+    const gchar *object_path, const gchar *interface_name, const gchar *signal_name,
+    GVariant *parameters, gpointer user_data) {
+    
+    (void)conn; (void)sender_name; (void)interface_name; (void)signal_name; (void)user_data;
+    
+    if (!g_variant_is_of_type(parameters, G_VARIANT_TYPE("(sv)"))) {
+        return;
+    }
+    
+    const gchar *prop_name = NULL;
+    GVariant *prop_value = NULL;
+    g_variant_get(parameters, "(&sv)", &prop_name, &prop_value);
+    
+    if (!prop_name || !prop_value) {
+        if (prop_value) g_variant_unref(prop_value);
+        return;
+    }
+    
+    /* 只关注 Active 属性 */
+    if (g_strcmp0(prop_name, "Active") == 0) {
+        gboolean active = g_variant_get_boolean(prop_value);
+        printf("[DataMonitor] Context %s Active 变化: %s\n", object_path, active ? "true" : "false");
+        
+        if (!active) {
+            /* 数据连接断开，使用 g_timeout_add 延迟恢复（非阻塞） */
+            printf("[DataMonitor] 数据连接断开，2秒后尝试恢复...\n");
+            
+            /* 取消之前的定时器（如果有） */
+            if (g_restore_timeout_id > 0) {
+                g_source_remove(g_restore_timeout_id);
+            }
+            
+            /* 2秒后尝试恢复 */
+            g_restore_timeout_id = g_timeout_add(2000, delayed_restore_data, NULL);
+        }
+    }
+    
+    g_variant_unref(prop_value);
+}
+
+/**
+ * NetworkRegistration PropertyChanged 信号回调
+ * 监听 Status 属性变化，注册成功时尝试激活数据连接
+ */
+static void on_network_property_changed(GDBusConnection *conn, const gchar *sender_name,
+    const gchar *object_path, const gchar *interface_name, const gchar *signal_name,
+    GVariant *parameters, gpointer user_data) {
+    
+    (void)conn; (void)sender_name; (void)object_path; (void)interface_name; 
+    (void)signal_name; (void)user_data;
+    
+    if (!g_variant_is_of_type(parameters, G_VARIANT_TYPE("(sv)"))) {
+        return;
+    }
+    
+    const gchar *prop_name = NULL;
+    GVariant *prop_value = NULL;
+    g_variant_get(parameters, "(&sv)", &prop_name, &prop_value);
+    
+    if (!prop_name || !prop_value) {
+        if (prop_value) g_variant_unref(prop_value);
+        return;
+    }
+    
+    /* 只关注 Status 属性 */
+    if (g_strcmp0(prop_name, "Status") == 0) {
+        const gchar *status = g_variant_get_string(prop_value, NULL);
+        printf("[DataMonitor] 网络注册状态变化: %s\n", status);
+        
+        if (g_strcmp0(status, "registered") == 0 || g_strcmp0(status, "roaming") == 0) {
+            /* 网络注册成功，立即检查数据连接 */
+            printf("[DataMonitor] 网络已注册，检查数据连接...\n");
+            
+            char result[256];
+            if (ofono_check_and_restore_data(result, sizeof(result)) >= 0) {
+                printf("[DataMonitor] 检查结果: %s\n", result);
+            }
+        }
+    }
+    
+    g_variant_unref(prop_value);
+}
+
+/**
+ * Manager PropertyChanged 信号回调
+ * 监听 DataCard 属性变化（外部切卡）
+ */
+static void on_manager_property_changed(GDBusConnection *conn, const gchar *sender_name,
+    const gchar *object_path, const gchar *interface_name, const gchar *signal_name,
+    GVariant *parameters, gpointer user_data) {
+    
+    (void)conn; (void)sender_name; (void)object_path; (void)interface_name; 
+    (void)signal_name; (void)user_data;
+    
+    if (!g_variant_is_of_type(parameters, G_VARIANT_TYPE("(sv)"))) {
+        return;
+    }
+    
+    const gchar *prop_name = NULL;
+    GVariant *prop_value = NULL;
+    g_variant_get(parameters, "(&sv)", &prop_name, &prop_value);
+    
+    if (!prop_name || !prop_value) {
+        if (prop_value) g_variant_unref(prop_value);
+        return;
+    }
+    
+    /* 监听 DataCard 属性变化（切卡） */
+    if (g_strcmp0(prop_name, "DataCard") == 0) {
+        const gchar *new_datacard = g_variant_get_string(prop_value, NULL);
+        printf("[DataMonitor] 检测到切卡: %s\n", new_datacard);
+        
+        /* 重新订阅信号（使用新的卡槽路径） */
+        printf("[DataMonitor] 重新订阅信号...\n");
+        
+        /* 先取消旧的 NetworkRegistration 订阅 */
+        if (g_network_signal_id > 0 && g_monitor_dbus_conn) {
+            g_dbus_connection_signal_unsubscribe(g_monitor_dbus_conn, g_network_signal_id);
+            g_network_signal_id = 0;
+        }
+        
+        /* 重新订阅 NetworkRegistration 信号（使用新路径） */
+        g_network_signal_id = g_dbus_connection_signal_subscribe(
+            g_monitor_dbus_conn,
+            OFONO_SERVICE,
+            "org.ofono.NetworkRegistration",
+            "PropertyChanged",
+            new_datacard,  /* 使用新的卡槽路径 */
+            NULL,
+            G_DBUS_SIGNAL_FLAGS_NONE,
+            on_network_property_changed,
+            NULL, NULL
+        );
+        printf("[DataMonitor] NetworkRegistration 信号重新订阅 ID: %u (路径: %s)\n", 
+               g_network_signal_id, new_datacard);
+        
+        /* 立即检查数据连接状态 */
+        char result[256];
+        if (ofono_check_and_restore_data(result, sizeof(result)) >= 0) {
+            printf("[DataMonitor] 切卡后检查: %s\n", result);
+        }
+    }
+    
+    g_variant_unref(prop_value);
+}
+
+/**
+ * 订阅数据监听信号
+ */
+static void subscribe_data_monitor_signals(void) {
+    GError *error = NULL;
+    GVariant *result = NULL;
+    
+    if (!g_monitor_dbus_conn) {
+        printf("[DataMonitor] D-Bus 未连接，无法订阅信号\n");
+        return;
+    }
+    
+    /* 先取消旧的订阅 */
+    unsubscribe_data_monitor_signals();
+    
+    /* 添加 D-Bus match 规则 - ConnectionContext PropertyChanged */
+    result = g_dbus_connection_call_sync(
+        g_monitor_dbus_conn,
+        "org.freedesktop.DBus",
+        "/org/freedesktop/DBus",
+        "org.freedesktop.DBus",
+        "AddMatch",
+        g_variant_new("(s)", "type='signal',interface='org.ofono.ConnectionContext',member='PropertyChanged'"),
+        NULL,
+        G_DBUS_CALL_FLAGS_NONE,
+        -1, NULL, &error
+    );
+    
+    if (error) {
+        printf("[DataMonitor] 添加 ConnectionContext match 规则失败: %s\n", error->message);
+        g_error_free(error);
+        error = NULL;
+    } else {
+        printf("[DataMonitor] ConnectionContext match 规则添加成功\n");
+        if (result) g_variant_unref(result);
+    }
+    
+    /* 添加 D-Bus match 规则 - NetworkRegistration PropertyChanged */
+    result = g_dbus_connection_call_sync(
+        g_monitor_dbus_conn,
+        "org.freedesktop.DBus",
+        "/org/freedesktop/DBus",
+        "org.freedesktop.DBus",
+        "AddMatch",
+        g_variant_new("(s)", "type='signal',interface='org.ofono.NetworkRegistration',member='PropertyChanged'"),
+        NULL,
+        G_DBUS_CALL_FLAGS_NONE,
+        -1, NULL, &error
+    );
+    
+    if (error) {
+        printf("[DataMonitor] 添加 NetworkRegistration match 规则失败: %s\n", error->message);
+        g_error_free(error);
+        error = NULL;
+    } else {
+        printf("[DataMonitor] NetworkRegistration match 规则添加成功\n");
+        if (result) g_variant_unref(result);
+    }
+    
+    /* 订阅 ConnectionContext PropertyChanged 信号 (所有 context) */
+    g_context_signal_id = g_dbus_connection_signal_subscribe(
+        g_monitor_dbus_conn,
+        OFONO_SERVICE,
+        "org.ofono.ConnectionContext",
+        "PropertyChanged",
+        NULL,  /* 监听所有路径 */
+        NULL,
+        G_DBUS_SIGNAL_FLAGS_NONE,
+        on_context_property_changed,
+        NULL, NULL
+    );
+    printf("[DataMonitor] ConnectionContext 信号订阅 ID: %u\n", g_context_signal_id);
+    
+    /* 动态获取当前卡槽路径 */
+    char slot[16], ril_path[32];
+    const char *modem_path = DEFAULT_MODEM_PATH;
+    if (get_current_slot(slot, ril_path) == 0 && strcmp(ril_path, "unknown") != 0) {
+        modem_path = ril_path;
+        printf("[DataMonitor] 使用当前卡槽: %s (%s)\n", slot, modem_path);
+    } else {
+        printf("[DataMonitor] 使用默认卡槽: %s\n", modem_path);
+    }
+    
+    /* 订阅 NetworkRegistration PropertyChanged 信号 */
+    g_network_signal_id = g_dbus_connection_signal_subscribe(
+        g_monitor_dbus_conn,
+        OFONO_SERVICE,
+        "org.ofono.NetworkRegistration",
+        "PropertyChanged",
+        modem_path,
+        NULL,
+        G_DBUS_SIGNAL_FLAGS_NONE,
+        on_network_property_changed,
+        NULL, NULL
+    );
+    printf("[DataMonitor] NetworkRegistration 信号订阅 ID: %u\n", g_network_signal_id);
+    
+    /* 添加 D-Bus match 规则 - Manager PropertyChanged (监听切卡) */
+    result = g_dbus_connection_call_sync(
+        g_monitor_dbus_conn,
+        "org.freedesktop.DBus",
+        "/org/freedesktop/DBus",
+        "org.freedesktop.DBus",
+        "AddMatch",
+        g_variant_new("(s)", "type='signal',interface='org.ofono.Manager',member='PropertyChanged'"),
+        NULL,
+        G_DBUS_CALL_FLAGS_NONE,
+        -1, NULL, &error
+    );
+    
+    if (error) {
+        printf("[DataMonitor] 添加 Manager match 规则失败: %s\n", error->message);
+        g_error_free(error);
+        error = NULL;
+    } else {
+        printf("[DataMonitor] Manager match 规则添加成功\n");
+        if (result) g_variant_unref(result);
+    }
+    
+    /* 订阅 Manager PropertyChanged 信号 (监听切卡) */
+    g_manager_signal_id = g_dbus_connection_signal_subscribe(
+        g_monitor_dbus_conn,
+        OFONO_SERVICE,
+        "org.ofono.Manager",
+        "PropertyChanged",
+        "/",  /* Manager 路径是根路径 */
+        NULL,
+        G_DBUS_SIGNAL_FLAGS_NONE,
+        on_manager_property_changed,
+        NULL, NULL
+    );
+    printf("[DataMonitor] Manager 信号订阅 ID: %u (监听切卡)\n", g_manager_signal_id);
+}
+
+/**
+ * 取消数据监听信号订阅
+ */
+static void unsubscribe_data_monitor_signals(void) {
+    if (g_context_signal_id > 0 && g_monitor_dbus_conn) {
+        g_dbus_connection_signal_unsubscribe(g_monitor_dbus_conn, g_context_signal_id);
+        printf("[DataMonitor] 已取消 ConnectionContext 信号订阅\n");
+    }
+    g_context_signal_id = 0;
+    
+    if (g_network_signal_id > 0 && g_monitor_dbus_conn) {
+        g_dbus_connection_signal_unsubscribe(g_monitor_dbus_conn, g_network_signal_id);
+        printf("[DataMonitor] 已取消 NetworkRegistration 信号订阅\n");
+    }
+    g_network_signal_id = 0;
+    
+    if (g_manager_signal_id > 0 && g_monitor_dbus_conn) {
+        g_dbus_connection_signal_unsubscribe(g_monitor_dbus_conn, g_manager_signal_id);
+        printf("[DataMonitor] 已取消 Manager 信号订阅\n");
+    }
+    g_manager_signal_id = 0;
+}
+
+/**
+ * oFono 服务出现回调
+ */
+static void on_ofono_monitor_appeared(GDBusConnection *conn, const gchar *name,
+    const gchar *name_owner, gpointer user_data) {
+    (void)conn; (void)user_data;
+    
+    printf("[DataMonitor] oFono 服务已启动: %s (owner: %s)\n", name, name_owner);
+    
+    /* 重新订阅信号 */
+    subscribe_data_monitor_signals();
+    
+    /* 立即检查一次数据连接状态 */
+    char result[256];
+    if (ofono_check_and_restore_data(result, sizeof(result)) >= 0) {
+        printf("[DataMonitor] 初始检查: %s\n", result);
+    }
+}
+
+/**
+ * oFono 服务消失回调
+ */
+static void on_ofono_monitor_vanished(GDBusConnection *conn, const gchar *name, gpointer user_data) {
+    (void)conn; (void)user_data;
+    
+    printf("[DataMonitor] oFono 服务已停止: %s\n", name);
+    
+    /* 取消信号订阅 */
+    unsubscribe_data_monitor_signals();
+}
+
+/**
+ * 启动数据连接监听（基于 DBus 信号）
+ */
+int ofono_start_data_monitor(void) {
+    GError *error = NULL;
+    
+    if (g_data_monitor_running) {
+        printf("[DataMonitor] 已在运行中\n");
+        return 0;
+    }
+    
+    printf("[DataMonitor] 启动数据连接监听...\n");
+    
+    /* 获取 D-Bus 连接 */
+    g_monitor_dbus_conn = g_bus_get_sync(G_BUS_TYPE_SYSTEM, NULL, &error);
+    if (!g_monitor_dbus_conn) {
+        printf("[DataMonitor] 获取 D-Bus 连接失败: %s\n", error ? error->message : "unknown");
+        if (error) g_error_free(error);
+        return -1;
+    }
+    
+    /* 监控 oFono 服务可用性 */
+    g_ofono_monitor_watch_id = g_bus_watch_name_on_connection(
+        g_monitor_dbus_conn,
+        OFONO_SERVICE,
+        G_BUS_NAME_WATCHER_FLAGS_NONE,
+        on_ofono_monitor_appeared,
+        on_ofono_monitor_vanished,
+        NULL, NULL
+    );
+    
+    if (g_ofono_monitor_watch_id == 0) {
+        printf("[DataMonitor] 监控 oFono 服务失败\n");
+        g_object_unref(g_monitor_dbus_conn);
+        g_monitor_dbus_conn = NULL;
+        return -1;
+    }
+    
+    g_data_monitor_running = 1;
+    printf("[DataMonitor] 数据连接监听已启动 (watch_id: %u)\n", g_ofono_monitor_watch_id);
+    
+    return 0;
+}
+
+/**
+ * 停止数据连接监听
+ */
+void ofono_stop_data_monitor(void) {
+    if (!g_data_monitor_running) {
+        return;
+    }
+    
+    printf("[DataMonitor] 停止数据连接监听...\n");
+    
+    /* 取消延迟恢复定时器 */
+    if (g_restore_timeout_id > 0) {
+        g_source_remove(g_restore_timeout_id);
+        g_restore_timeout_id = 0;
+    }
+    
+    /* 取消信号订阅 */
+    unsubscribe_data_monitor_signals();
+    
+    /* 取消服务监控 */
+    if (g_ofono_monitor_watch_id > 0) {
+        g_bus_unwatch_name(g_ofono_monitor_watch_id);
+        g_ofono_monitor_watch_id = 0;
+    }
+    
+    /* 释放 D-Bus 连接 */
+    if (g_monitor_dbus_conn) {
+        g_object_unref(g_monitor_dbus_conn);
+        g_monitor_dbus_conn = NULL;
+    }
+    
+    g_data_monitor_running = 0;
+    printf("[DataMonitor] 数据连接监听已停止\n");
+}
+
+/**
+ * 检查数据连接监听是否运行中
+ */
+int ofono_is_data_monitor_running(void) {
+    return g_data_monitor_running ? 1 : 0;
+}
+

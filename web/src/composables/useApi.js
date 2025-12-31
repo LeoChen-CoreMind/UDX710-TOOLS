@@ -157,12 +157,18 @@ export async function getTrafficConfig() {
 export async function setTrafficLimit(enabled, limitGB) {
   const switchValue = enabled ? 1 : 0
   const muchValue = Math.round(limitGB * 1073741824) // GB转字节
-  return request(`/api/set/total?switch=${switchValue}&much=${muchValue}`)
+  return request('/api/set/total', {
+    method: 'POST',
+    body: JSON.stringify({ switch: switchValue, much: muchValue })
+  })
 }
 
 // 清除流量统计
 export async function clearTrafficStats() {
-  return request('/api/set/total')
+  return request('/api/set/total', {
+    method: 'POST',
+    body: JSON.stringify({})
+  })
 }
 
 // ==================== 定时重启API ====================

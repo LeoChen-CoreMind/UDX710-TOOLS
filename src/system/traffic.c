@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file traffic.c
  * @brief 流量控制实现 (Go: handlers/traffic.go)
  */
@@ -16,6 +16,7 @@
 #include "database.h"  /* 使用数据库配置函数 */
 #include "airplane.h"  /* 飞行模式控制 */
 #include "http_utils.h"
+#include "json_builder.h"
 
 #define VNSTAT_DB "/var/lib/vnstat/vnstat.db"
 #define NETWORK_IFACE "sipa_eth0"
@@ -55,20 +56,10 @@ static void get_traffic_from_vnstat(long long *rx, long long *tx) {
         return;
     }
 
-    /* 简单解析 JSON 获取 rx 和 tx */
-    char *p = strstr(output, "\"total\"");
-    if (p) {
-        char *rx_pos = strstr(p, "\"rx\"");
-        if (rx_pos) {
-            rx_pos = strchr(rx_pos, ':');
-            if (rx_pos) *rx = atoll(rx_pos + 1);
-        }
-        char *tx_pos = strstr(p, "\"tx\"");
-        if (tx_pos) {
-            tx_pos = strchr(tx_pos, ':');
-            if (tx_pos) *tx = atoll(tx_pos + 1);
-        }
-    }
+    /* 使用mongoose JSON API解析 */
+    struct mg_str json = mg_str(output);
+    *rx = mg_json_get_long(json, "$.interfaces[0].traffic.total.rx", 0);
+    *tx = mg_json_get_long(json, "$.interfaces[0].traffic.total.tx", 0);
 }
 
 /* 格式化字节数 */
@@ -149,12 +140,13 @@ void handle_get_traffic_total(struct mg_connection *c, struct mg_http_message *h
     format_bytes(tx, tx_str, sizeof(tx_str));
     format_bytes(rx + tx, total_str, sizeof(total_str));
 
-    char json[256];
-    snprintf(json, sizeof(json),
-        "{\"rx\":\"%s\",\"tx\":\"%s\",\"total\":\"%s\"}",
-        rx_str, tx_str, total_str);
-
-    HTTP_OK(c, json);
+    JsonBuilder *j = json_new();
+    json_obj_open(j);
+    json_add_str(j, "rx", rx_str);
+    json_add_str(j, "tx", tx_str);
+    json_add_str(j, "total", total_str);
+    json_obj_close(j);
+    HTTP_OK_FREE(c, json_finish(j));
 }
 
 /* GET /api/get/set - 获取流量配置 */
@@ -162,42 +154,41 @@ void handle_get_traffic_config(struct mg_connection *c, struct mg_http_message *
     HTTP_CHECK_GET(c, hm);
 
     TrafficConfig config = read_traffic_config();
-    char json[128];
-    snprintf(json, sizeof(json), "{\"much\":%lld,\"switch\":%d}", config.much, config.switch_on);
-
-    HTTP_OK(c, json);
+    
+    JsonBuilder *j = json_new();
+    json_obj_open(j);
+    json_add_long(j, "much", config.much);
+    json_add_int(j, "switch", config.switch_on);
+    json_obj_close(j);
+    HTTP_OK_FREE(c, json_finish(j));
 }
 
-/* GET /api/set/total - 设置流量限制 */
+/* POST /api/set/total - 设置流量限制 */
 void handle_set_traffic_limit(struct mg_connection *c, struct mg_http_message *hm) {
-    HTTP_CHECK_GET(c, hm);
+    HTTP_CHECK_POST(c, hm);
 
-    /* 解析 URL 参数 */
-    char switch_str[16] = {0}, much_str[32] = {0};
-    struct mg_str query = hm->query;
-
-    /* 简单解析 query string */
-    if (query.len > 0) {
-        char *q = strndup(query.buf, query.len);
-        char *p = strstr(q, "switch=");
-        if (p) sscanf(p, "switch=%15[^&]", switch_str);
-        p = strstr(q, "much=");
-        if (p) sscanf(p, "much=%31[^&]", much_str);
-        free(q);
-    }
+    /* 使用mongoose JSON解析 */
+    long switch_val = mg_json_get_long(hm->body, "$.switch", -1);
+    long long much_val = mg_json_get_long(hm->body, "$.much", -1);
 
     /* 如果没有参数，清除统计 */
-    if (strlen(switch_str) == 0 || strlen(much_str) == 0) {
+    if (switch_val < 0 || much_val < 0) {
         char output[256];
         run_command(output, sizeof(output), "rm", "-f", VNSTAT_DB, NULL);
         init_vnstat_db();
-        HTTP_OK(c, "{\"success\":true,\"msg\":\"Clean ok\"}");
+        
+        JsonBuilder *j = json_new();
+        json_obj_open(j);
+        json_add_bool(j, "success", 1);
+        json_add_str(j, "msg", "Clean ok");
+        json_obj_close(j);
+        HTTP_OK_FREE(c, json_finish(j));
         return;
     }
 
     TrafficConfig config;
-    config.switch_on = atoi(switch_str);
-    config.much = atoll(much_str);
+    config.switch_on = (int)switch_val;
+    config.much = much_val;
     save_traffic_config(&config);
 
     if (config.switch_on == 0) {
@@ -209,5 +200,10 @@ void handle_set_traffic_limit(struct mg_connection *c, struct mg_http_message *h
         pthread_detach(flow_control_thread);
     }
 
-    HTTP_OK(c, "{\"success\":true,\"msg\":\"added ok\"}");
+    JsonBuilder *j = json_new();
+    json_obj_open(j);
+    json_add_bool(j, "success", 1);
+    json_add_str(j, "msg", "added ok");
+    json_obj_close(j);
+    HTTP_OK_FREE(c, json_finish(j));
 } 

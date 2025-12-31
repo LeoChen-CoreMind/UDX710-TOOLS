@@ -96,6 +96,20 @@ static inline void http_method_error(struct mg_connection *c) {
 #define HTTP_JSON(c, code, json) \
     mg_http_reply((c), (code), HTTP_CORS_HEADERS, "%s", (json))
 
+/* 200 OK响应并释放json字符串 */
+#define HTTP_OK_FREE(c, json) do { \
+    char *_json = (json); \
+    mg_http_reply((c), 200, HTTP_CORS_HEADERS, "%s", _json); \
+    free(_json); \
+} while(0)
+
+/* 带状态码的JSON响应并释放 */
+#define HTTP_JSON_FREE(c, code, json) do { \
+    char *_json = (json); \
+    mg_http_reply((c), (code), HTTP_CORS_HEADERS, "%s", _json); \
+    free(_json); \
+} while(0)
+
 /* ==================== JSON解析辅助宏 ==================== */
 
 /* 

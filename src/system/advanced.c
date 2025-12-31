@@ -14,6 +14,7 @@
 #include "exec_utils.h"
 #include "http_utils.h"
 #include "ofono.h"
+#include "json_builder.h"
 
 /* 频段映射结构 */
 typedef struct {
@@ -112,44 +113,40 @@ void handle_get_bands(struct mg_connection *c, struct mg_http_message *hm) {
     if (result4G) g_free(result4G);
     if (result5G) g_free(result5G);
 
-    /* 构建 JSON 响应 */
-    char json[2048];
-    snprintf(json, sizeof(json),
-        "{"
-        "\"4G_TDD\":["
-            "{\"name\":\"TDD_34\",\"label\":\"B34\",\"locked\":%s},"
-            "{\"name\":\"TDD_38\",\"label\":\"B38\",\"locked\":%s},"
-            "{\"name\":\"TDD_39\",\"label\":\"B39\",\"locked\":%s},"
-            "{\"name\":\"TDD_40\",\"label\":\"B40\",\"locked\":%s},"
-            "{\"name\":\"TDD_41\",\"label\":\"B41\",\"locked\":%s}"
-        "],"
-        "\"4G_FDD\":["
-            "{\"name\":\"FDD_01\",\"label\":\"B1\",\"locked\":%s},"
-            "{\"name\":\"FDD_03\",\"label\":\"B3\",\"locked\":%s},"
-            "{\"name\":\"FDD_05\",\"label\":\"B5\",\"locked\":%s},"
-            "{\"name\":\"FDD_08\",\"label\":\"B8\",\"locked\":%s}"
-        "],"
-        "\"5G\":["
-            "{\"name\":\"N01\",\"label\":\"N1\",\"locked\":%s},"
-            "{\"name\":\"N08\",\"label\":\"N8\",\"locked\":%s},"
-            "{\"name\":\"N28\",\"label\":\"N28\",\"locked\":%s},"
-            "{\"name\":\"N41\",\"label\":\"N41\",\"locked\":%s},"
-            "{\"name\":\"N77\",\"label\":\"N77\",\"locked\":%s},"
-            "{\"name\":\"N78\",\"label\":\"N78\",\"locked\":%s},"
-            "{\"name\":\"N79\",\"label\":\"N79\",\"locked\":%s}"
-        "]"
-        "}",
-        bands[0] ? "true" : "false", bands[1] ? "true" : "false",
-        bands[2] ? "true" : "false", bands[3] ? "true" : "false",
-        bands[4] ? "true" : "false", bands[5] ? "true" : "false",
-        bands[6] ? "true" : "false", bands[7] ? "true" : "false",
-        bands[8] ? "true" : "false", bands[9] ? "true" : "false",
-        bands[10] ? "true" : "false", bands[11] ? "true" : "false",
-        bands[12] ? "true" : "false", bands[13] ? "true" : "false",
-        bands[14] ? "true" : "false", bands[15] ? "true" : "false"
-    );
-
-    HTTP_OK(c, json);
+    /* 使用JSON Builder构建响应 */
+    JsonBuilder *j = json_new();
+    json_obj_open(j);
+    
+    /* 4G TDD */
+    json_arr_open(j, "4G_TDD");
+    json_arr_obj_open(j); json_add_str(j, "name", "TDD_34"); json_add_str(j, "label", "B34"); json_add_bool(j, "locked", bands[0]); json_obj_close(j);
+    json_arr_obj_open(j); json_add_str(j, "name", "TDD_38"); json_add_str(j, "label", "B38"); json_add_bool(j, "locked", bands[1]); json_obj_close(j);
+    json_arr_obj_open(j); json_add_str(j, "name", "TDD_39"); json_add_str(j, "label", "B39"); json_add_bool(j, "locked", bands[2]); json_obj_close(j);
+    json_arr_obj_open(j); json_add_str(j, "name", "TDD_40"); json_add_str(j, "label", "B40"); json_add_bool(j, "locked", bands[3]); json_obj_close(j);
+    json_arr_obj_open(j); json_add_str(j, "name", "TDD_41"); json_add_str(j, "label", "B41"); json_add_bool(j, "locked", bands[4]); json_obj_close(j);
+    json_arr_close(j);
+    
+    /* 4G FDD */
+    json_arr_open(j, "4G_FDD");
+    json_arr_obj_open(j); json_add_str(j, "name", "FDD_01"); json_add_str(j, "label", "B1"); json_add_bool(j, "locked", bands[5]); json_obj_close(j);
+    json_arr_obj_open(j); json_add_str(j, "name", "FDD_03"); json_add_str(j, "label", "B3"); json_add_bool(j, "locked", bands[6]); json_obj_close(j);
+    json_arr_obj_open(j); json_add_str(j, "name", "FDD_05"); json_add_str(j, "label", "B5"); json_add_bool(j, "locked", bands[7]); json_obj_close(j);
+    json_arr_obj_open(j); json_add_str(j, "name", "FDD_08"); json_add_str(j, "label", "B8"); json_add_bool(j, "locked", bands[8]); json_obj_close(j);
+    json_arr_close(j);
+    
+    /* 5G */
+    json_arr_open(j, "5G");
+    json_arr_obj_open(j); json_add_str(j, "name", "N01"); json_add_str(j, "label", "N1"); json_add_bool(j, "locked", bands[9]); json_obj_close(j);
+    json_arr_obj_open(j); json_add_str(j, "name", "N08"); json_add_str(j, "label", "N8"); json_add_bool(j, "locked", bands[10]); json_obj_close(j);
+    json_arr_obj_open(j); json_add_str(j, "name", "N28"); json_add_str(j, "label", "N28"); json_add_bool(j, "locked", bands[11]); json_obj_close(j);
+    json_arr_obj_open(j); json_add_str(j, "name", "N41"); json_add_str(j, "label", "N41"); json_add_bool(j, "locked", bands[12]); json_obj_close(j);
+    json_arr_obj_open(j); json_add_str(j, "name", "N77"); json_add_str(j, "label", "N77"); json_add_bool(j, "locked", bands[13]); json_obj_close(j);
+    json_arr_obj_open(j); json_add_str(j, "name", "N78"); json_add_str(j, "label", "N78"); json_add_bool(j, "locked", bands[14]); json_obj_close(j);
+    json_arr_obj_open(j); json_add_str(j, "name", "N79"); json_add_str(j, "label", "N79"); json_add_bool(j, "locked", bands[15]); json_obj_close(j);
+    json_arr_close(j);
+    
+    json_obj_close(j);
+    HTTP_OK_FREE(c, json_finish(j));
 }
 
 
@@ -163,34 +160,27 @@ static const BandMapping *find_band(const char *name) {
     return NULL;
 }
 
-/* 从 JSON 数组中提取频段名称 */
-static int parse_bands_array(const char *json, char bands[][32], int max_bands) {
+/* 从 JSON 数组中提取频段名称 - 使用mongoose JSON API */
+static int parse_bands_array(const char *json_str, char bands[][32], int max_bands) {
     int count = 0;
-    const char *p = strstr(json, "\"bands\"");
-    if (!p) return 0;
+    struct mg_str json = mg_str(json_str);
     
-    p = strchr(p, '[');
-    if (!p) return 0;
-    p++;
-
-    while (*p && count < max_bands) {
-        /* 跳过空白 */
-        while (*p == ' ' || *p == '\n' || *p == '\r' || *p == '\t' || *p == ',') p++;
-        if (*p == ']') break;
-        if (*p == '"') {
-            p++;
-            char *end = strchr(p, '"');
-            if (end) {
-                size_t len = end - p;
-                if (len < 32) {
-                    memcpy(bands[count], p, len);
-                    bands[count][len] = '\0';
-                    count++;
-                }
-                p = end + 1;
+    /* 获取bands数组 */
+    struct mg_str bands_arr = mg_json_get_tok(json, "$.bands");
+    if (bands_arr.buf == NULL) return 0;
+    
+    /* 遍历数组元素 */
+    struct mg_str key, val;
+    size_t ofs = 0;
+    while ((ofs = mg_json_next(bands_arr, ofs, &key, &val)) > 0 && count < max_bands) {
+        /* val 包含引号，如 "TDD_34" */
+        if (val.len > 2 && val.buf[0] == '"') {
+            size_t len = val.len - 2;
+            if (len < 32) {
+                memcpy(bands[count], val.buf + 1, len);
+                bands[count][len] = '\0';
+                count++;
             }
-        } else {
-            p++;
         }
     }
     return count;
@@ -269,7 +259,12 @@ void handle_lock_bands(struct mg_connection *c, struct mg_http_message *hm) {
     if (result) g_free(result);
 
     printf("频段锁定成功\n");
-    HTTP_OK(c, "{\"success\":true,\"message\":\"频段锁定成功\"}");
+    JsonBuilder *j = json_new();
+    json_obj_open(j);
+    json_add_bool(j, "success", 1);
+    json_add_str(j, "message", "频段锁定成功");
+    json_obj_close(j);
+    HTTP_OK_FREE(c, json_finish(j));
 }
 
 
@@ -309,7 +304,12 @@ void handle_unlock_bands(struct mg_connection *c, struct mg_http_message *hm) {
     if (result) g_free(result);
 
     printf("频段解锁成功\n");
-    HTTP_OK(c, "{\"success\":true,\"message\":\"频段解锁成功\"}");
+    JsonBuilder *j = json_new();
+    json_obj_open(j);
+    json_add_bool(j, "success", 1);
+    json_add_str(j, "message", "频段解锁成功");
+    json_obj_close(j);
+    HTTP_OK_FREE(c, json_finish(j));
 }
 
 /* 解析小区数据 (复用 handlers.c 中的函数) */
@@ -375,6 +375,25 @@ static int is_5g_network(void) {
     return 0; /* 4G 或其他 */
 }
 
+/* 辅助函数：添加小区对象到JSON Builder */
+static void add_cell_to_json(JsonBuilder *j, const char *rat, const char *band_prefix, 
+                              const char *band, int arfcn, int pci,
+                              double rsrp, double rsrq, double sinr, int is_serving) {
+    char band_str[32];
+    snprintf(band_str, sizeof(band_str), "%s%s", band_prefix, band);
+    
+    json_arr_obj_open(j);
+    json_add_str(j, "rat", rat);
+    json_add_str(j, "band", band_str);
+    json_add_int(j, "arfcn", arfcn);
+    json_add_int(j, "pci", pci);
+    json_add_double(j, "rsrp", rsrp);
+    json_add_double(j, "rsrq", rsrq);
+    json_add_double(j, "sinr", sinr);
+    json_add_bool(j, "isServing", is_serving);
+    json_obj_close(j);
+}
+
 /* GET /api/cells - 获取小区信息 */
 void handle_get_cells(struct mg_connection *c, struct mg_http_message *hm) {
     HTTP_CHECK_GET(c, hm);
@@ -386,8 +405,12 @@ void handle_get_cells(struct mg_connection *c, struct mg_http_message *hm) {
     int is_5g = is_5g_network();
     printf("检测到%s网络\n", is_5g ? "5G" : "4G");
 
-    char json[8192] = "{\"Code\":0,\"Error\":\"\",\"Data\":[";
-    int json_len = strlen(json);
+    JsonBuilder *j = json_new();
+    json_obj_open(j);
+    json_add_int(j, "Code", 0);
+    json_add_str(j, "Error", "");
+    json_arr_open(j, "Data");
+    
     int cell_count = 0;
 
     if (is_5g) {
@@ -396,14 +419,10 @@ void handle_get_cells(struct mg_connection *c, struct mg_http_message *hm) {
             char data[64][16][32] = {{{0}}};
             int rows = parse_cell_to_vec(result, data);
             if (rows > 15) {
-                char cell_json[512];
-                snprintf(cell_json, sizeof(cell_json),
-                    "{\"rat\":\"5G\",\"band\":\"N%s\",\"arfcn\":%d,\"pci\":%d,"
-                    "\"rsrp\":%.2f,\"rsrq\":%.2f,\"sinr\":%.2f,\"isServing\":true}",
-                    data[0][0], atoi(data[1][0]), atoi(data[2][0]),
+                add_cell_to_json(j, "5G", "N", data[0][0],
+                    atoi(data[1][0]), atoi(data[2][0]),
                     atof(data[3][0]) / 100.0, atof(data[4][0]) / 100.0,
-                    atof(data[15][0]) / 100.0);
-                json_len += snprintf(json + json_len, sizeof(json) - json_len, "%s", cell_json);
+                    atof(data[15][0]) / 100.0, 1);
                 cell_count++;
             }
             g_free(result);
@@ -428,15 +447,10 @@ void handle_get_cells(struct mg_connection *c, struct mg_http_message *hm) {
                         band_str = arfcn_to_nr_band(arfcn);
                     }
                     
-                    char cell_json[512];
-                    snprintf(cell_json, sizeof(cell_json),
-                        "%s{\"rat\":\"5G\",\"band\":\"N%s\",\"arfcn\":%d,\"pci\":%d,"
-                        "\"rsrp\":%.2f,\"rsrq\":%.2f,\"sinr\":%.2f,\"isServing\":false}",
-                        cell_count > 0 ? "," : "",
-                        band_str, arfcn, pci,
+                    add_cell_to_json(j, "5G", "N", band_str,
+                        arfcn, pci,
                         atof(data[3][i]) / 100.0, atof(data[4][i]) / 100.0,
-                        atof(data[5][i]) / 100.0);
-                    json_len += snprintf(json + json_len, sizeof(json) - json_len, "%s", cell_json);
+                        atof(data[5][i]) / 100.0, 0);
                     cell_count++;
                 }
             }
@@ -448,14 +462,10 @@ void handle_get_cells(struct mg_connection *c, struct mg_http_message *hm) {
             char data[64][16][32] = {{{0}}};
             int rows = parse_cell_to_vec(result, data);
             if (rows > 33) {
-                char cell_json[512];
-                snprintf(cell_json, sizeof(cell_json),
-                    "{\"rat\":\"4G\",\"band\":\"B%s\",\"arfcn\":%d,\"pci\":%d,"
-                    "\"rsrp\":%.2f,\"rsrq\":%.2f,\"sinr\":%.2f,\"isServing\":true}",
-                    data[0][0], atoi(data[1][0]), atoi(data[2][0]),
+                add_cell_to_json(j, "4G", "B", data[0][0],
+                    atoi(data[1][0]), atoi(data[2][0]),
                     atof(data[3][0]) / 100.0, atof(data[4][0]) / 100.0,
-                    atof(data[33][0]) / 100.0);
-                json_len += snprintf(json + json_len, sizeof(json) - json_len, "%s", cell_json);
+                    atof(data[33][0]) / 100.0, 1);
                 cell_count++;
             }
             g_free(result);
@@ -478,25 +488,21 @@ void handle_get_cells(struct mg_connection *c, struct mg_http_message *hm) {
                     if (strlen(band) == 0) band = "0";  /* 未知频段默认显示0 */
                 }
                 
-                char cell_json[512];
-                snprintf(cell_json, sizeof(cell_json),
-                    "%s{\"rat\":\"4G\",\"band\":\"B%s\",\"arfcn\":%d,\"pci\":%d,"
-                    "\"rsrp\":%.2f,\"rsrq\":%.2f,\"sinr\":%.2f,\"isServing\":false}",
-                    cell_count > 0 ? "," : "",
-                    band, arfcn, pci,
+                add_cell_to_json(j, "4G", "B", band,
+                    arfcn, pci,
                     atof(data[i][2]) / 100.0, atof(data[i][3]) / 100.0,
-                    atof(data[i][6]) / 100.0);
-                json_len += snprintf(json + json_len, sizeof(json) - json_len, "%s", cell_json);
+                    atof(data[i][6]) / 100.0, 0);
                 cell_count++;
             }
             g_free(result);
         }
     }
 
-    snprintf(json + json_len, sizeof(json) - json_len, "]}");
+    json_arr_close(j);
+    json_obj_close(j);
     printf("小区信息获取完成，共 %d 个小区\n", cell_count);
 
-    HTTP_OK(c, json);
+    HTTP_OK_FREE(c, json_finish(j));
 }
 
 
@@ -506,27 +512,14 @@ void handle_lock_cell(struct mg_connection *c, struct mg_http_message *hm) {
 
     char technology[32] = {0}, arfcn[32] = {0}, pci[32] = {0};
 
-    /* 解析 JSON */
-    char *p = strstr(hm->body.buf, "\"technology\"");
-    if (p) {
-        p = strchr(p, ':'); if (p) p = strchr(p, '"'); if (p) { p++;
-        char *end = strchr(p, '"');
-        if (end) { size_t len = end - p; if (len < 32) { memcpy(technology, p, len); } }
-    }}
-
-    p = strstr(hm->body.buf, "\"arfcn\"");
-    if (p) {
-        p = strchr(p, ':'); if (p) p = strchr(p, '"'); if (p) { p++;
-        char *end = strchr(p, '"');
-        if (end) { size_t len = end - p; if (len < 32) { memcpy(arfcn, p, len); } }
-    }}
-
-    p = strstr(hm->body.buf, "\"pci\"");
-    if (p) {
-        p = strchr(p, ':'); if (p) p = strchr(p, '"'); if (p) { p++;
-        char *end = strchr(p, '"');
-        if (end) { size_t len = end - p; if (len < 32) { memcpy(pci, p, len); } }
-    }}
+    /* 使用mongoose JSON API解析 */
+    char *tech_str = mg_json_get_str(hm->body, "$.technology");
+    char *arfcn_str = mg_json_get_str(hm->body, "$.arfcn");
+    char *pci_str = mg_json_get_str(hm->body, "$.pci");
+    
+    if (tech_str) { strncpy(technology, tech_str, sizeof(technology) - 1); free(tech_str); }
+    if (arfcn_str) { strncpy(arfcn, arfcn_str, sizeof(arfcn) - 1); free(arfcn_str); }
+    if (pci_str) { strncpy(pci, pci_str, sizeof(pci) - 1); free(pci_str); }
 
     printf("收到锁小区请求: Technology=%s, ARFCN=%s, PCI=%s\n", technology, arfcn, pci);
 
@@ -571,7 +564,16 @@ void handle_lock_cell(struct mg_connection *c, struct mg_http_message *hm) {
     if (result) g_free(result);
 
     printf("小区锁定成功\n");
-    HTTP_OK(c, "{\"Code\":0,\"Error\":\"\",\"Data\":{\"success\":true,\"message\":\"小区锁定成功\"}}");
+    JsonBuilder *j = json_new();
+    json_obj_open(j);
+    json_add_int(j, "Code", 0);
+    json_add_str(j, "Error", "");
+    json_key_obj_open(j, "Data");
+    json_add_bool(j, "success", 1);
+    json_add_str(j, "message", "小区锁定成功");
+    json_obj_close(j);
+    json_obj_close(j);
+    HTTP_OK_FREE(c, json_finish(j));
 }
 
 /* POST /api/unlock_cell - 解锁小区 */
@@ -606,5 +608,14 @@ void handle_unlock_cell(struct mg_connection *c, struct mg_http_message *hm) {
     if (result) g_free(result);
 
     printf("小区解锁成功\n");
-    HTTP_OK(c, "{\"Code\":0,\"Error\":\"\",\"Data\":{\"success\":true,\"message\":\"小区解锁成功\"}}");
+    JsonBuilder *j = json_new();
+    json_obj_open(j);
+    json_add_int(j, "Code", 0);
+    json_add_str(j, "Error", "");
+    json_key_obj_open(j, "Data");
+    json_add_bool(j, "success", 1);
+    json_add_str(j, "message", "小区解锁成功");
+    json_obj_close(j);
+    json_obj_close(j);
+    HTTP_OK_FREE(c, json_finish(j));
 }

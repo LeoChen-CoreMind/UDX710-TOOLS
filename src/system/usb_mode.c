@@ -19,6 +19,7 @@
 #include "mongoose.h"
 #include "usb_mode.h"
 #include "http_utils.h"
+#include "json_builder.h"
 
 /* USB 模式配置结构 */
 typedef struct {
@@ -143,14 +144,18 @@ void handle_usb_mode_get(struct mg_connection *c, struct mg_http_message *hm) {
     /* 检查是否有临时配置 */
     int is_temporary = (access(USB_MODE_TMP_CFG_PATH, F_OK) == 0);
     
-    char json[256];
-    snprintf(json, sizeof(json),
-        "{\"Code\":0,\"Error\":\"\",\"Data\":{"
-        "\"mode\":\"%s\",\"mode_value\":%d,\"is_temporary\":%s"
-        "}}",
-        mode_name, mode, is_temporary ? "true" : "false");
+    JsonBuilder *j = json_new();
+    json_obj_open(j);
+    json_add_int(j, "Code", 0);
+    json_add_str(j, "Error", "");
+    json_key_obj_open(j, "Data");
+    json_add_str(j, "mode", mode_name);
+    json_add_int(j, "mode_value", mode);
+    json_add_bool(j, "is_temporary", is_temporary);
+    json_obj_close(j);
+    json_obj_close(j);
     
-    HTTP_OK(c, json);
+    HTTP_OK_FREE(c, json_finish(j));
 }
 
 /* POST /api/usb/mode - 设置USB模式 */
@@ -174,30 +179,52 @@ void handle_usb_mode_set(struct mg_connection *c, struct mg_http_message *hm) {
     
     /* 验证模式 */
     if (strlen(mode_str) == 0) {
-        HTTP_OK(c, "{\"Code\":1,\"Error\":\"mode参数不能为空\",\"Data\":null}");
+        JsonBuilder *j = json_new();
+        json_obj_open(j);
+        json_add_int(j, "Code", 1);
+        json_add_str(j, "Error", "mode参数不能为空");
+        json_add_null(j, "Data");
+        json_obj_close(j);
+        HTTP_OK_FREE(c, json_finish(j));
         return;
     }
     
     int mode = usb_mode_from_name(mode_str);
     if (mode < 0) {
-        HTTP_OK(c, "{\"Code\":1,\"Error\":\"无效的模式，支持: cdc_ncm, cdc_ecm, rndis\",\"Data\":null}");
+        JsonBuilder *j = json_new();
+        json_obj_open(j);
+        json_add_int(j, "Code", 1);
+        json_add_str(j, "Error", "无效的模式，支持: cdc_ncm, cdc_ecm, rndis");
+        json_add_null(j, "Data");
+        json_obj_close(j);
+        HTTP_OK_FREE(c, json_finish(j));
         return;
     }
     
     /* 设置模式 */
     if (usb_mode_set(mode, permanent) != 0) {
-        HTTP_OK(c, "{\"Code\":1,\"Error\":\"设置模式失败\",\"Data\":null}");
+        JsonBuilder *j = json_new();
+        json_obj_open(j);
+        json_add_int(j, "Code", 1);
+        json_add_str(j, "Error", "设置模式失败");
+        json_add_null(j, "Data");
+        json_obj_close(j);
+        HTTP_OK_FREE(c, json_finish(j));
         return;
     }
     
-    char json[256];
-    snprintf(json, sizeof(json),
-        "{\"Code\":0,\"Error\":\"\",\"Data\":{"
-        "\"mode\":\"%s\",\"permanent\":%s,\"message\":\"设置成功，重启后生效\""
-        "}}",
-        mode_str, permanent ? "true" : "false");
+    JsonBuilder *j = json_new();
+    json_obj_open(j);
+    json_add_int(j, "Code", 0);
+    json_add_str(j, "Error", "");
+    json_key_obj_open(j, "Data");
+    json_add_str(j, "mode", mode_str);
+    json_add_bool(j, "permanent", permanent);
+    json_add_str(j, "message", "设置成功，重启后生效");
+    json_obj_close(j);
+    json_obj_close(j);
     
-    HTTP_OK(c, json);
+    HTTP_OK_FREE(c, json_finish(j));
 }
 
 /* ==================== USB 热切换实现 ==================== */
@@ -570,13 +597,25 @@ void handle_usb_advance(struct mg_connection *c, struct mg_http_message *hm) {
     
     double mode_val = 0;
     if (!mg_json_get_num(hm->body, "$.mode", &mode_val)) {
-        HTTP_OK(c, "{\"Code\":1,\"Error\":\"mode参数不能为空\",\"Data\":null}");
+        JsonBuilder *j = json_new();
+        json_obj_open(j);
+        json_add_int(j, "Code", 1);
+        json_add_str(j, "Error", "mode参数不能为空");
+        json_add_null(j, "Data");
+        json_obj_close(j);
+        HTTP_OK_FREE(c, json_finish(j));
         return;
     }
     
     int mode = (int)mode_val;
     if (mode < 1 || mode > 3) {
-        HTTP_OK(c, "{\"Code\":1,\"Error\":\"无效模式，支持: 1=NCM, 2=ECM, 3=RNDIS\",\"Data\":null}");
+        JsonBuilder *j = json_new();
+        json_obj_open(j);
+        json_add_int(j, "Code", 1);
+        json_add_str(j, "Error", "无效模式，支持: 1=NCM, 2=ECM, 3=RNDIS");
+        json_add_null(j, "Data");
+        json_obj_close(j);
+        HTTP_OK_FREE(c, json_finish(j));
         return;
     }
     
@@ -584,14 +623,18 @@ void handle_usb_advance(struct mg_connection *c, struct mg_http_message *hm) {
      * 因为USB切换过程中会断开USB连接，如果先切换再响应，
      * HTTP响应无法发送到客户端，前端会显示失败
      */
-    char json[256];
-    snprintf(json, sizeof(json),
-        "{\"Code\":0,\"Error\":\"\",\"Data\":{"
-        "\"mode\":\"%s\",\"mode_value\":%d,\"message\":\"USB模式切换中，请稍候...\""
-        "}}",
-        usb_mode_name(mode), mode);
+    JsonBuilder *j = json_new();
+    json_obj_open(j);
+    json_add_int(j, "Code", 0);
+    json_add_str(j, "Error", "");
+    json_key_obj_open(j, "Data");
+    json_add_str(j, "mode", usb_mode_name(mode));
+    json_add_int(j, "mode_value", mode);
+    json_add_str(j, "message", "USB模式切换中，请稍候...");
+    json_obj_close(j);
+    json_obj_close(j);
     
-    HTTP_OK(c, json);
+    HTTP_OK_FREE(c, json_finish(j));
     c->is_draining = 1;  /* 标记连接即将关闭，确保响应发送完成 */
     
     /* 等待响应发送完成 */

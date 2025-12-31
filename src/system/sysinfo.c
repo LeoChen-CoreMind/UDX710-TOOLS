@@ -304,49 +304,32 @@ int get_qos_info(int *qci, int *downlink, int *uplink) {
 
 /* 获取网络类型和频段 */
 int get_network_type_and_band(char *net_type, size_t type_size, char *band, size_t band_size) {
-    char output[2048];
+    char tech[32] = {0};
+    int band_num = 0;
     
-    strcpy(net_type, "N/A");
-    strcpy(band, "N/A");
+    strncpy(net_type, "N/A", type_size - 1);
+    strncpy(band, "N/A", band_size - 1);
 
-    /* 使用 dbus-send 获取网络信息 */
-    if (run_command(output, sizeof(output), "dbus-send", "--system", "--dest=org.ofono", 
-                    "--print-reply", "/ril_0", "org.ofono.NetworkMonitor.GetServingCellInformation", NULL) != 0) {
+    /* 使用C语言D-Bus API获取网络信息 */
+    if (ofono_get_serving_cell_info(tech, sizeof(tech), &band_num) != 0) {
         return -1;
     }
 
     /* 判断网络类型 */
-    if (strstr(output, "\"nr\"")) {
+    if (strcmp(tech, "nr") == 0) {
         strncpy(net_type, "5G NR", type_size - 1);
-    } else if (strstr(output, "\"lte\"")) {
+        if (band_num > 0) {
+            snprintf(band, band_size, "N%d", band_num);
+        }
+    } else if (strcmp(tech, "lte") == 0) {
         strncpy(net_type, "4G LTE", type_size - 1);
-    }
-
-    /* 解析频段 - 查找 "Band" 字段 */
-    char *band_line = strstr(output, "\"Band\"");
-    if (band_line) {
-        /* 查找下一行的 variant 值 */
-        char *next_line = strchr(band_line, '\n');
-        if (next_line) {
-            next_line++;
-            if (strstr(next_line, "variant")) {
-                /* 提取数字 */
-                char *p = next_line;
-                while (*p) {
-                    if (*p >= '0' && *p <= '9') {
-                        int val = atoi(p);
-                        if (val > 0) {
-                            if (strcmp(net_type, "5G NR") == 0) {
-                                snprintf(band, band_size, "N%d", val);
-                            } else {
-                                snprintf(band, band_size, "B%d", val);
-                            }
-                            break;
-                        }
-                    }
-                    p++;
-                }
-            }
+        if (band_num > 0) {
+            snprintf(band, band_size, "B%d", band_num);
+        }
+    } else if (strlen(tech) > 0) {
+        strncpy(net_type, tech, type_size - 1);
+        if (band_num > 0) {
+            snprintf(band, band_size, "%d", band_num);
         }
     }
 

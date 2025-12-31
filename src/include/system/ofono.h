@@ -189,6 +189,16 @@ int ofono_set_apn_properties(const char *context_path,
  */
 int ofono_get_serving_cell_tech(char *tech, int size);
 
+/**
+ * 获取当前服务小区信息（技术类型和频段）
+ * 通过 NetworkMonitor.GetServingCellInformation 获取
+ * @param tech 输出技术类型字符串 (如 "nr", "lte", "umts", "gsm")
+ * @param tech_size 技术类型缓冲区大小
+ * @param band 输出频段号 (如 41, 78)
+ * @return 成功返回0，失败返回错误码
+ */
+int ofono_get_serving_cell_info(char *tech, int tech_size, int *band);
+
 /* ==================== 数据连接 Watchdog API ==================== */
 
 /**
@@ -224,8 +234,31 @@ void ofono_stop_data_watchdog(void);
 /**
  * 检查 Watchdog 是否运行中
  * @return 运行中返回1，否则返回0
+ * @deprecated 请使用 ofono_is_data_monitor_running()
  */
 int ofono_is_watchdog_running(void);
+
+/* ==================== 数据连接监听 API (DBus 信号驱动) ==================== */
+
+/**
+ * 启动数据连接监听（基于 DBus 信号）
+ * 订阅 ConnectionContext.PropertyChanged 和 NetworkRegistration.PropertyChanged 信号
+ * 当数据连接断开或网络注册成功时自动尝试恢复连接
+ * @return 成功返回0，失败返回-1
+ */
+int ofono_start_data_monitor(void);
+
+/**
+ * 停止数据连接监听
+ * 取消所有信号订阅和服务监控
+ */
+void ofono_stop_data_monitor(void);
+
+/**
+ * 检查数据连接监听是否运行中
+ * @return 运行中返回1，否则返回0
+ */
+int ofono_is_data_monitor_running(void);
 
 #ifdef __cplusplus
 }

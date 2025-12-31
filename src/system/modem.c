@@ -122,5 +122,12 @@ int switch_slot(const char *slot) {
         return -1;
     }
 
+    /* 步骤6: 重启数据连接监听（切换到新卡槽） */
+    if (ofono_is_data_monitor_running()) {
+        printf("[Modem] 切卡完成，重启数据连接监听...\n");
+        ofono_stop_data_monitor();
+        ofono_start_data_monitor();
+    }
+
     return 0;
 }

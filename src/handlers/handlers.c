@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file handlers.c
  * @brief HTTP API handlers implementation (Go: handlers)
  */
@@ -18,6 +18,8 @@
 #include "modem.h"
 #include "http_utils.h"
 #include "apn.h"
+#include "ofono.h"
+#include "json_builder.h"
 
 
 /* GET /api/info - 获取系统信息 */
@@ -25,79 +27,48 @@ void handle_info(struct mg_connection *c, struct mg_http_message *hm) {
     HTTP_CHECK_GET(c, hm);
 
     SystemInfo info;
-    char json[4096];
-
     get_system_info(&info);
 
-    snprintf(json, sizeof(json),
-        "{"
-        "\"hostname\":\"%s\","
-        "\"sysname\":\"%s\","
-        "\"release\":\"%s\","
-        "\"version\":\"%s\","
-        "\"machine\":\"%s\","
-        "\"total_ram\":%lu,"
-        "\"free_ram\":%lu,"
-        "\"cached_ram\":%lu,"
-        "\"cpu_usage\":%.2f,"
-        "\"uptime\":%.2f,"
-        "\"bridge_status\":\"%s\","
-        "\"sim_slot\":\"%s\","
-        "\"signal_strength\":\"%s\","
-        "\"thermal_temp\":%.2f,"
-        "\"power_status\":\"%s\","
-        "\"battery_health\":\"%s\","
-        "\"battery_capacity\":%u,"
-        "\"ssid\":\"%s\","
-        "\"passwd\":\"%s\","
-        "\"select_network_mode\":\"%s\","
-        "\"is_activated\":%d,"
-        "\"serial\":\"%s\","
-        "\"network_mode\":\"%s\","
-        "\"airplane_mode\":%s,"
-        "\"imei\":\"%s\","
-        "\"iccid\":\"%s\","
-        "\"imsi\":\"%s\","
-        "\"carrier\":\"%s\","
-        "\"network_type\":\"%s\","
-        "\"network_band\":\"%s\","
-        "\"qci\":%d,"
-        "\"downlink_rate\":%d,"
-        "\"uplink_rate\":%d"
-        "}",
-        info.hostname, info.sysname, info.release, info.version, info.machine,
-        info.total_ram, info.free_ram, info.cached_ram, info.cpu_usage, info.uptime,
-        info.bridge_status, info.sim_slot, info.signal_strength, info.thermal_temp,
-        info.power_status, info.battery_health, info.battery_capacity,
-        info.ssid, info.passwd, info.select_network_mode, info.is_activated,
-        info.serial, info.network_mode, info.airplane_mode ? "true" : "false",
-        info.imei, info.iccid, info.imsi, info.carrier,
-        info.network_type, info.network_band, info.qci, info.downlink_rate, info.uplink_rate
-    );
+    JsonBuilder *j = json_new();
+    json_obj_open(j);
+    json_add_str(j, "hostname", info.hostname);
+    json_add_str(j, "sysname", info.sysname);
+    json_add_str(j, "release", info.release);
+    json_add_str(j, "version", info.version);
+    json_add_str(j, "machine", info.machine);
+    json_add_ulong(j, "total_ram", info.total_ram);
+    json_add_ulong(j, "free_ram", info.free_ram);
+    json_add_ulong(j, "cached_ram", info.cached_ram);
+    json_add_double(j, "cpu_usage", info.cpu_usage);
+    json_add_double(j, "uptime", info.uptime);
+    json_add_str(j, "bridge_status", info.bridge_status);
+    json_add_str(j, "sim_slot", info.sim_slot);
+    json_add_str(j, "signal_strength", info.signal_strength);
+    json_add_double(j, "thermal_temp", info.thermal_temp);
+    json_add_str(j, "power_status", info.power_status);
+    json_add_str(j, "battery_health", info.battery_health);
+    json_add_int(j, "battery_capacity", info.battery_capacity);
+    json_add_str(j, "ssid", info.ssid);
+    json_add_str(j, "passwd", info.passwd);
+    json_add_str(j, "select_network_mode", info.select_network_mode);
+    json_add_int(j, "is_activated", info.is_activated);
+    json_add_str(j, "serial", info.serial);
+    json_add_str(j, "network_mode", info.network_mode);
+    json_add_bool(j, "airplane_mode", info.airplane_mode);
+    json_add_str(j, "imei", info.imei);
+    json_add_str(j, "iccid", info.iccid);
+    json_add_str(j, "imsi", info.imsi);
+    json_add_str(j, "carrier", info.carrier);
+    json_add_str(j, "network_type", info.network_type);
+    json_add_str(j, "network_band", info.network_band);
+    json_add_int(j, "qci", info.qci);
+    json_add_int(j, "downlink_rate", info.downlink_rate);
+    json_add_int(j, "uplink_rate", info.uplink_rate);
+    json_obj_close(j);
 
-    HTTP_OK(c, json);
+    HTTP_OK_FREE(c, json_finish(j));
 }
 
-/* JSON 字符串转义 - 处理特殊字符 */
-static void json_escape_string(const char *src, char *dst, size_t dst_size) {
-    size_t j = 0;
-    for (size_t i = 0; src[i] && j < dst_size - 2; i++) {
-        char c = src[i];
-        switch (c) {
-            case '"':  if (j + 2 < dst_size) { dst[j++] = '\\'; dst[j++] = '"'; } break;
-            case '\\': if (j + 2 < dst_size) { dst[j++] = '\\'; dst[j++] = '\\'; } break;
-            case '\n': if (j + 2 < dst_size) { dst[j++] = '\\'; dst[j++] = 'n'; } break;
-            case '\r': if (j + 2 < dst_size) { dst[j++] = '\\'; dst[j++] = 'r'; } break;
-            case '\t': if (j + 2 < dst_size) { dst[j++] = '\\'; dst[j++] = 't'; } break;
-            default:
-                if ((unsigned char)c >= 0x20) {
-                    dst[j++] = c;
-                }
-                break;
-        }
-    }
-    dst[j] = '\0';
-}
 
 /* POST /api/at - 执行 AT 命令 */
 void handle_execute_at(struct mg_connection *c, struct mg_http_message *hm) {
@@ -105,7 +76,6 @@ void handle_execute_at(struct mg_connection *c, struct mg_http_message *hm) {
 
     char cmd[256] = {0};
     char *result = NULL;
-    char response[4096];
 
     /* 使用mongoose内置JSON解析 */
     char *cmd_str = mg_json_get_str(hm->body, "$.command");
@@ -115,7 +85,7 @@ void handle_execute_at(struct mg_connection *c, struct mg_http_message *hm) {
     }
 
     if (strlen(cmd) == 0) {
-        HTTP_OK(c, "{\"Code\":1,\"Error\":\"命令不能为空\",\"Data\":null}");
+        HTTP_OK(c, "{\"Code\":0,\"Error\":\"命令不能为空\",\"Data\":null}");
         return;
     }
 
@@ -128,45 +98,27 @@ void handle_execute_at(struct mg_connection *c, struct mg_http_message *hm) {
 
     printf("执行 AT 命令: %s\n", cmd);
 
+    JsonBuilder *j = json_new();
+    json_obj_open(j);
+
     /* 执行 AT 命令 */
     if (execute_at(cmd, &result) == 0) {
         printf("AT 命令执行成功: %s\n", result);
-        char escaped[2048];
-        json_escape_string(result ? result : "", escaped, sizeof(escaped));
-        snprintf(response, sizeof(response),
-            "{\"Code\":0,\"Error\":\"\",\"Data\":\"%s\"}", escaped);
+        json_add_int(j, "Code", 0);
+        json_add_str(j, "Error", "");
+        json_add_str(j, "Data", result ? result : "");
         g_free(result);
     } else {
         printf("AT 命令执行失败: %s\n", dbus_get_last_error());
-        char escaped_err[512];
-        json_escape_string(dbus_get_last_error(), escaped_err, sizeof(escaped_err));
-        snprintf(response, sizeof(response),
-            "{\"Code\":1,\"Error\":\"%s\",\"Data\":null}", escaped_err);
+        json_add_int(j, "Code", 1);
+        json_add_str(j, "Error", dbus_get_last_error());
+        json_add_null(j, "Data");
     }
 
-    HTTP_OK(c, response);
+    json_obj_close(j);
+    HTTP_OK_FREE(c, json_finish(j));
 }
 
-
-/* 简单 JSON 字符串提取 */
-static int extract_json_string(const char *json, const char *key, char *value, size_t size) {
-    char pattern[64];
-    snprintf(pattern, sizeof(pattern), "\"%s\"", key);
-    char *p = strstr(json, pattern);
-    if (!p) return -1;
-    p = strchr(p + strlen(pattern), ':');
-    if (!p) return -1;
-    p = strchr(p, '"');
-    if (!p) return -1;
-    p++;
-    char *end = strchr(p, '"');
-    if (!end) return -1;
-    size_t len = end - p;
-    if (len >= size) len = size - 1;
-    memcpy(value, p, len);
-    value[len] = '\0';
-    return 0;
-}
 
 /* POST /api/set_network - 设置网络模式 */
 void handle_set_network(struct mg_connection *c, struct mg_http_message *hm) {
@@ -221,15 +173,21 @@ void handle_switch(struct mg_connection *c, struct mg_http_message *hm) {
         return;
     }
 
-    char response[128];
+    JsonBuilder *j = json_new();
+    json_obj_open(j);
     if (switch_slot(slot) == 0) {
-        snprintf(response, sizeof(response), 
-            "{\"status\":\"success\",\"message\":\"Slot switched to %s successfully\"}", slot);
+        json_add_str(j, "status", "success");
+        char msg[64];
+        snprintf(msg, sizeof(msg), "Slot switched to %s successfully", slot);
+        json_add_str(j, "message", msg);
     } else {
-        snprintf(response, sizeof(response), 
-            "{\"status\":\"error\",\"message\":\"Failed to switch slot to %s\"}", slot);
+        json_add_str(j, "status", "error");
+        char msg[64];
+        snprintf(msg, sizeof(msg), "Failed to switch slot to %s", slot);
+        json_add_str(j, "message", msg);
     }
-    HTTP_OK(c, response);
+    json_obj_close(j);
+    HTTP_OK_FREE(c, json_finish(j));
 }
 
 /* POST /api/airplane_mode - 飞行模式控制 */
@@ -393,17 +351,17 @@ int parse_cell_to_vec(const char *input, char data[64][16][32]) {
  * @return 1=5G, 0=4G/其他
  */
 static int is_5g_network(void) {
-    char output[2048];
+    char tech[32] = {0};
+    int band = 0;
     
-    /* 使用 dbus-send 获取网络信息 (与 Go 版本一致) */
-    if (run_command(output, sizeof(output), "dbus-send", "--system", "--dest=org.ofono", 
-                    "--print-reply", "/ril_0", "org.ofono.NetworkMonitor.GetServingCellInformation", NULL) != 0) {
+    /* 使用C语言D-Bus API获取网络信息 */
+    if (ofono_get_serving_cell_info(tech, sizeof(tech), &band) != 0) {
         printf("D-Bus 查询网络类型失败，默认使用 4G\n");
         return 0;
     }
 
-    /* 判断网络类型 - 检查是否包含 "nr" */
-    if (strstr(output, "\"nr\"")) {
+    /* 判断网络类型 - 检查是否为 "nr" */
+    if (strcmp(tech, "nr") == 0) {
         return 1; /* 5G */
     }
     
@@ -488,19 +446,22 @@ void handle_get_current_band(struct mg_connection *c, struct mg_http_message *hm
         if (result) { g_free(result); result = NULL; }
     }
 
-    snprintf(response, sizeof(response),
-        "{\"Code\":0,\"Error\":\"\",\"Data\":{"
-        "\"network_type\":\"%s\","
-        "\"band\":\"%s\","
-        "\"arfcn\":%d,"
-        "\"pci\":%d,"
-        "\"rsrp\":%.2f,"
-        "\"rsrq\":%.2f,"
-        "\"sinr\":%.2f"
-        "}}",
-        net_type, band, arfcn, pci, rsrp, rsrq, sinr);
+    JsonBuilder *j = json_new();
+    json_obj_open(j);
+    json_add_int(j, "Code", 0);
+    json_add_str(j, "Error", "");
+    json_key_obj_open(j, "Data");
+    json_add_str(j, "network_type", net_type);
+    json_add_str(j, "band", band);
+    json_add_int(j, "arfcn", arfcn);
+    json_add_int(j, "pci", pci);
+    json_add_double(j, "rsrp", rsrp);
+    json_add_double(j, "rsrq", rsrq);
+    json_add_double(j, "sinr", sinr);
+    json_obj_close(j);
+    json_obj_close(j);
 
-    HTTP_OK(c, response);
+    HTTP_OK_FREE(c, json_finish(j));
 }
 
 
@@ -519,29 +480,26 @@ void handle_sms_list(struct mg_connection *c, struct mg_http_message *hm) {
         return;
     }
 
-    /* 构建JSON数组 */
-    char json[65536];
-    int offset = 0;
-    offset += snprintf(json + offset, sizeof(json) - offset, "[");
+    /* 使用JSON Builder构建数组 */
+    JsonBuilder *j = json_new();
+    json_arr_open(j, NULL);
     
     for (int i = 0; i < count; i++) {
-        char escaped_content[2048];
-        json_escape_string(messages[i].content, escaped_content, sizeof(escaped_content));
-        
         char time_str[32];
         struct tm *tm_info = localtime(&messages[i].timestamp);
         strftime(time_str, sizeof(time_str), "%Y-%m-%dT%H:%M:%S", tm_info);
         
-        offset += snprintf(json + offset, sizeof(json) - offset,
-            "%s{\"id\":%d,\"sender\":\"%s\",\"content\":\"%s\",\"timestamp\":\"%s\",\"read\":%s}",
-            i > 0 ? "," : "",
-            messages[i].id, messages[i].sender, escaped_content, time_str,
-            messages[i].is_read ? "true" : "false");
+        json_arr_obj_open(j);
+        json_add_int(j, "id", messages[i].id);
+        json_add_str(j, "sender", messages[i].sender);
+        json_add_str(j, "content", messages[i].content);
+        json_add_str(j, "timestamp", time_str);
+        json_add_bool(j, "read", messages[i].is_read);
+        json_obj_close(j);
     }
     
-    offset += snprintf(json + offset, sizeof(json) - offset, "]");
-
-    HTTP_OK(c, json);
+    json_arr_close(j);
+    HTTP_OK_FREE(c, json_finish(j));
 }
 
 /* POST /api/sms/send - 发送短信 */
@@ -563,11 +521,14 @@ void handle_sms_send(struct mg_connection *c, struct mg_http_message *hm) {
     }
 
     char result_path[256] = {0};
-    char response[512];
     if (sms_send(recipient, content, result_path, sizeof(result_path)) == 0) {
-        snprintf(response, sizeof(response),
-            "{\"status\":\"success\",\"message\":\"短信发送成功\",\"path\":\"%s\"}", result_path);
-        HTTP_OK(c, response);
+        JsonBuilder *j = json_new();
+        json_obj_open(j);
+        json_add_str(j, "status", "success");
+        json_add_str(j, "message", "短信发送成功");
+        json_add_str(j, "path", result_path);
+        json_obj_close(j);
+        HTTP_OK_FREE(c, json_finish(j));
     } else {
         HTTP_ERROR(c, 500, "短信发送失败");
     }
@@ -607,61 +568,26 @@ void handle_sms_webhook_get(struct mg_connection *c, struct mg_http_message *hm)
         return;
     }
 
-    char escaped_body[4096];
-    char escaped_headers[1024];
-    json_escape_string(config.body, escaped_body, sizeof(escaped_body));
-    json_escape_string(config.headers, escaped_headers, sizeof(escaped_headers));
+    JsonBuilder *j = json_new();
+    json_obj_open(j);
+    json_add_bool(j, "enabled", config.enabled);
+    json_add_str(j, "platform", config.platform);
+    json_add_str(j, "url", config.url);
+    json_add_str(j, "body", config.body);
+    json_add_str(j, "headers", config.headers);
+    json_obj_close(j);
 
-    char json[8192];
-    snprintf(json, sizeof(json),
-        "{\"enabled\":%s,\"platform\":\"%s\",\"url\":\"%s\",\"body\":\"%s\",\"headers\":\"%s\"}",
-        config.enabled ? "true" : "false", config.platform, config.url, escaped_body, escaped_headers);
-
-    HTTP_OK(c, json);
+    HTTP_OK_FREE(c, json_finish(j));
 }
 
-/* 智能解析JSON字符串值 - 正确处理转义字符 */
-static int parse_json_string_field(const char *json, const char *key, char *out, size_t out_size) {
-    char pattern[64];
-    snprintf(pattern, sizeof(pattern), "\"%s\"", key);
-    
-    const char *p = strstr(json, pattern);
-    if (!p) return -1;
-    
-    p += strlen(pattern);
-    while (*p == ' ' || *p == ':') p++;
-    if (*p != '"') return -1;
-    p++;  /* 跳过开始引号 */
-    
-    size_t i = 0;
-    while (*p && i < out_size - 1) {
-        if (*p == '\\' && *(p + 1)) {
-            p++;
-            switch (*p) {
-                case 'n': out[i++] = '\n'; break;
-                case 'r': out[i++] = '\r'; break;
-                case 't': out[i++] = '\t'; break;
-                case '"': out[i++] = '"'; break;
-                case '\\': out[i++] = '\\'; break;
-                case '/': out[i++] = '/'; break;
-                case 'u':
-                    /* 跳过Unicode \uXXXX */
-                    if (*(p+1) && *(p+2) && *(p+3) && *(p+4)) {
-                        p += 4;
-                        out[i++] = '?';
-                    }
-                    break;
-                default: out[i++] = *p; break;
-            }
-            p++;
-        } else if (*p == '"') {
-            break;  /* 未转义的引号表示字符串结束 */
-        } else {
-            out[i++] = *p++;
-        }
+/* 辅助函数：使用mongoose解析JSON字符串并复制到目标缓冲区 */
+static void mg_json_get_str_to_buf(struct mg_str json, const char *path, char *out, size_t out_size) {
+    char *str = mg_json_get_str(json, path);
+    if (str) {
+        strncpy(out, str, out_size - 1);
+        out[out_size - 1] = '\0';
+        free(str);
     }
-    out[i] = '\0';
-    return 0;
 }
 
 /* POST /api/sms/webhook - 保存Webhook配置 */
@@ -670,22 +596,16 @@ void handle_sms_webhook_save(struct mg_connection *c, struct mg_http_message *hm
 
     WebhookConfig config = {0};
     
-    /* 复制JSON到临时缓冲区确保以null结尾 */
-    char json_buf[8192];
-    size_t json_len = hm->body.len < sizeof(json_buf) - 1 ? hm->body.len : sizeof(json_buf) - 1;
-    memcpy(json_buf, hm->body.buf, json_len);
-    json_buf[json_len] = '\0';
+    /* 使用mongoose JSON API解析 */
+    bool enabled = false;
+    mg_json_get_bool(hm->body, "$.enabled", &enabled);
+    config.enabled = enabled ? 1 : 0;
     
-    /* 解析 enabled */
-    if (strstr(json_buf, "\"enabled\":true") || strstr(json_buf, "\"enabled\": true")) {
-        config.enabled = 1;
-    }
-    
-    /* 使用智能解析函数解析字符串字段 */
-    parse_json_string_field(json_buf, "platform", config.platform, sizeof(config.platform));
-    parse_json_string_field(json_buf, "url", config.url, sizeof(config.url));
-    parse_json_string_field(json_buf, "body", config.body, sizeof(config.body));
-    parse_json_string_field(json_buf, "headers", config.headers, sizeof(config.headers));
+    /* 使用mongoose解析字符串字段 */
+    mg_json_get_str_to_buf(hm->body, "$.platform", config.platform, sizeof(config.platform));
+    mg_json_get_str_to_buf(hm->body, "$.url", config.url, sizeof(config.url));
+    mg_json_get_str_to_buf(hm->body, "$.body", config.body, sizeof(config.body));
+    mg_json_get_str_to_buf(hm->body, "$.headers", config.headers, sizeof(config.headers));
 
     if (sms_save_webhook_config(&config) == 0) {
         HTTP_SUCCESS(c, "配置已保存");
@@ -717,37 +637,21 @@ void handle_sms_sent_list(struct mg_connection *c, struct mg_http_message *hm) {
         return;
     }
 
-    char json[65536];
-    int offset = snprintf(json, sizeof(json), "[");
+    JsonBuilder *j = json_new();
+    json_arr_open(j, NULL);
     
     for (int i = 0; i < count; i++) {
-        char escaped_content[2048];
-        size_t j = 0;
-        for (size_t k = 0; messages[i].content[k] && j < sizeof(escaped_content) - 2; k++) {
-            char ch = messages[i].content[k];
-            if (ch == '"' || ch == '\\') {
-                escaped_content[j++] = '\\';
-            } else if (ch == '\n') {
-                escaped_content[j++] = '\\';
-                ch = 'n';
-            } else if (ch == '\r') {
-                escaped_content[j++] = '\\';
-                ch = 'r';
-            }
-            escaped_content[j++] = ch;
-        }
-        escaped_content[j] = '\0';
-        
-        offset += snprintf(json + offset, sizeof(json) - offset,
-            "%s{\"id\":%d,\"recipient\":\"%s\",\"content\":\"%s\",\"timestamp\":%ld,\"status\":\"%s\"}",
-            i > 0 ? "," : "",
-            messages[i].id, messages[i].recipient, escaped_content,
-            (long)messages[i].timestamp, messages[i].status);
+        json_arr_obj_open(j);
+        json_add_int(j, "id", messages[i].id);
+        json_add_str(j, "recipient", messages[i].recipient);
+        json_add_str(j, "content", messages[i].content);
+        json_add_long(j, "timestamp", (long long)messages[i].timestamp);
+        json_add_str(j, "status", messages[i].status);
+        json_obj_close(j);
     }
     
-    snprintf(json + offset, sizeof(json) - offset, "]");
-    
-    HTTP_OK(c, json);
+    json_arr_close(j);
+    HTTP_OK_FREE(c, json_finish(j));
 }
 
 /* GET /api/sms/config - 获取短信配置 */
@@ -757,9 +661,12 @@ void handle_sms_config_get(struct mg_connection *c, struct mg_http_message *hm) 
     int max_count = sms_get_max_count();
     int max_sent_count = sms_get_max_sent_count();
     
-    char json[128];
-    snprintf(json, sizeof(json), "{\"max_count\":%d,\"max_sent_count\":%d}", max_count, max_sent_count);
-    HTTP_OK(c, json);
+    JsonBuilder *j = json_new();
+    json_obj_open(j);
+    json_add_int(j, "max_count", max_count);
+    json_add_int(j, "max_sent_count", max_sent_count);
+    json_obj_close(j);
+    HTTP_OK_FREE(c, json_finish(j));
 }
 
 /* POST /api/sms/config - 保存短信配置 */
@@ -789,9 +696,13 @@ void handle_sms_config_save(struct mg_connection *c, struct mg_http_message *hm)
     sms_set_max_count(max_count);
     sms_set_max_sent_count(max_sent_count);
     
-    char json[128];
-    snprintf(json, sizeof(json), "{\"status\":\"success\",\"max_count\":%d,\"max_sent_count\":%d}", max_count, max_sent_count);
-    HTTP_OK(c, json);
+    JsonBuilder *j = json_new();
+    json_obj_open(j);
+    json_add_str(j, "status", "success");
+    json_add_int(j, "max_count", max_count);
+    json_add_int(j, "max_sent_count", max_sent_count);
+    json_obj_close(j);
+    HTTP_OK_FREE(c, json_finish(j));
 }
 
 /* DELETE /api/sms/sent/:id - 删除发送记录 */
@@ -823,9 +734,11 @@ void handle_sms_fix_get(struct mg_connection *c, struct mg_http_message *hm) {
     HTTP_CHECK_GET(c, hm);
 
     int enabled = sms_get_fix_enabled();
-    char json[64];
-    snprintf(json, sizeof(json), "{\"enabled\":%s}", enabled ? "true" : "false");
-    HTTP_OK(c, json);
+    JsonBuilder *j = json_new();
+    json_obj_open(j);
+    json_add_bool(j, "enabled", enabled);
+    json_obj_close(j);
+    HTTP_OK_FREE(c, json_finish(j));
 }
 
 /* POST /api/sms/fix - 设置短信接收修复开关 */
@@ -839,11 +752,13 @@ void handle_sms_fix_set(struct mg_connection *c, struct mg_http_message *hm) {
     }
     
     if (sms_set_fix_enabled(enabled) == 0) {
-        char json[128];
-        snprintf(json, sizeof(json), "{\"status\":\"success\",\"enabled\":%s,\"message\":\"%s\"}", 
-            enabled ? "true" : "false",
-            enabled ? "短信接收修复已开启" : "短信接收修复已关闭");
-        HTTP_OK(c, json);
+        JsonBuilder *j = json_new();
+        json_obj_open(j);
+        json_add_str(j, "status", "success");
+        json_add_bool(j, "enabled", enabled);
+        json_add_str(j, "message", enabled ? "短信接收修复已开启" : "短信接收修复已关闭");
+        json_obj_close(j);
+        HTTP_OK_FREE(c, json_finish(j));
     } else {
         HTTP_ERROR(c, 500, "设置失败，AT命令执行错误");
     }
@@ -856,9 +771,11 @@ void handle_sms_fix_set(struct mg_connection *c, struct mg_http_message *hm) {
 void handle_update_version(struct mg_connection *c, struct mg_http_message *hm) {
     HTTP_CHECK_GET(c, hm);
 
-    char json[128];
-    snprintf(json, sizeof(json), "{\"version\":\"%s\"}", update_get_version());
-    HTTP_OK(c, json);
+    JsonBuilder *j = json_new();
+    json_obj_open(j);
+    json_add_str(j, "version", update_get_version());
+    json_obj_close(j);
+    HTTP_OK_FREE(c, json_finish(j));
 }
 
 /* POST /api/update/upload - 上传更新包 */
@@ -882,9 +799,13 @@ void handle_update_upload(struct mg_connection *c, struct mg_http_message *hm) {
             fclose(fp);
             
             printf("更新包上传成功: %lu bytes\n", (unsigned long)part.body.len);
-            char json[128];
-            snprintf(json, sizeof(json), "{\"status\":\"success\",\"message\":\"上传成功\",\"size\":%lu}", (unsigned long)part.body.len);
-            HTTP_OK(c, json);
+            JsonBuilder *j = json_new();
+            json_obj_open(j);
+            json_add_str(j, "status", "success");
+            json_add_str(j, "message", "上传成功");
+            json_add_ulong(j, "size", (unsigned long)part.body.len);
+            json_obj_close(j);
+            HTTP_OK_FREE(c, json_finish(j));
             return;
         }
     }
@@ -930,20 +851,23 @@ void handle_update_install(struct mg_connection *c, struct mg_http_message *hm) 
     char output[2048] = {0};
     
     if (update_install(output, sizeof(output)) == 0) {
-        char escaped[1024];
-        json_escape_string(output, escaped, sizeof(escaped));
-        char json[2048];
-        snprintf(json, sizeof(json), "{\"status\":\"success\",\"message\":\"安装成功，正在重启...\",\"output\":\"%s\"}", escaped);
-        HTTP_OK(c, json);
+        JsonBuilder *j = json_new();
+        json_obj_open(j);
+        json_add_str(j, "status", "success");
+        json_add_str(j, "message", "安装成功，正在重启...");
+        json_add_str(j, "output", output);
+        json_obj_close(j);
+        HTTP_OK_FREE(c, json_finish(j));
         c->is_draining = 1;
         sleep(2);
         device_reboot();
     } else {
-        char escaped[1024];
-        json_escape_string(output, escaped, sizeof(escaped));
-        char json[2048];
-        snprintf(json, sizeof(json), "{\"error\":\"安装失败\",\"output\":\"%s\"}", escaped);
-        HTTP_JSON(c, 500, json);
+        JsonBuilder *j = json_new();
+        json_obj_open(j);
+        json_add_str(j, "error", "安装失败");
+        json_add_str(j, "output", output);
+        json_obj_close(j);
+        HTTP_JSON_FREE(c, 500, json_finish(j));
     }
 }
 
@@ -958,16 +882,17 @@ void handle_update_check(struct mg_connection *c, struct mg_http_message *hm) {
         const char *current = update_get_version();
         int has_update = strcmp(info.version, current) > 0 ? 1 : 0;
         
-        char escaped_changelog[2048];
-        json_escape_string(info.changelog, escaped_changelog, sizeof(escaped_changelog));
-        
-        char json[4096];
-        snprintf(json, sizeof(json),
-            "{\"current_version\":\"%s\",\"latest_version\":\"%s\",\"has_update\":%s,"
-            "\"url\":\"%s\",\"changelog\":\"%s\",\"size\":%lu,\"required\":%s}",
-            current, info.version, has_update ? "true" : "false",
-            info.url, escaped_changelog, (unsigned long)info.size, info.required ? "true" : "false");
-        HTTP_OK(c, json);
+        JsonBuilder *j = json_new();
+        json_obj_open(j);
+        json_add_str(j, "current_version", current);
+        json_add_str(j, "latest_version", info.version);
+        json_add_bool(j, "has_update", has_update);
+        json_add_str(j, "url", info.url);
+        json_add_str(j, "changelog", info.changelog);
+        json_add_ulong(j, "size", (unsigned long)info.size);
+        json_add_bool(j, "required", info.required);
+        json_obj_close(j);
+        HTTP_OK_FREE(c, json_finish(j));
     } else {
         HTTP_ERROR(c, 500, "检查版本失败");
     }
@@ -989,11 +914,17 @@ void handle_get_system_time(struct mg_connection *c, struct mg_http_message *hm)
     strftime(date, sizeof(date), "%Y-%m-%d", tm_info);
     strftime(time_str, sizeof(time_str), "%H:%M:%S", tm_info);
     
-    char json[256];
-    snprintf(json, sizeof(json),
-        "{\"Code\":0,\"Data\":{\"datetime\":\"%s\",\"date\":\"%s\",\"time\":\"%s\",\"timestamp\":%ld}}",
-        datetime, date, time_str, (long)now);
-    HTTP_OK(c, json);
+    JsonBuilder *j = json_new();
+    json_obj_open(j);
+    json_add_int(j, "Code", 0);
+    json_key_obj_open(j, "Data");
+    json_add_str(j, "datetime", datetime);
+    json_add_str(j, "date", date);
+    json_add_str(j, "time", time_str);
+    json_add_long(j, "timestamp", (long long)now);
+    json_obj_close(j);
+    json_obj_close(j);
+    HTTP_OK_FREE(c, json_finish(j));
 }
 
 /* POST /api/set/time - NTP同步系统时间 */
@@ -1020,14 +951,19 @@ void handle_set_system_time(struct mg_connection *c, struct mg_http_message *hm)
         }
     }
     
+    JsonBuilder *j = json_new();
+    json_obj_open(j);
     if (success) {
         run_command(output, sizeof(output), "hwclock", "-w", NULL);
-        char json[128];
-        snprintf(json, sizeof(json), "{\"Code\":0,\"Data\":\"NTP同步成功\",\"server\":\"%s\"}", used_server);
-        HTTP_OK(c, json);
+        json_add_int(j, "Code", 0);
+        json_add_str(j, "Data", "NTP同步成功");
+        json_add_str(j, "server", used_server);
     } else {
-        HTTP_OK(c, "{\"Code\":1,\"Error\":\"所有NTP服务器同步失败\"}");
+        json_add_int(j, "Code", 1);
+        json_add_str(j, "Error", "所有NTP服务器同步失败");
     }
+    json_obj_close(j);
+    HTTP_OK_FREE(c, json_finish(j));
 }
 
 /* ==================== 数据连接和漫游 API ==================== */
@@ -1035,16 +971,19 @@ void handle_set_system_time(struct mg_connection *c, struct mg_http_message *hm)
 
 /* GET/POST /api/data - 数据连接开关 */
 void handle_data_status(struct mg_connection *c, struct mg_http_message *hm) {
-    char response[256];
-
     if (hm->method.len == 3 && memcmp(hm->method.buf, "GET", 3) == 0) {
         /* GET - 查询数据连接状态 */
         int active = 0;
         if (ofono_get_data_status(&active) == 0) {
-            snprintf(response, sizeof(response),
-                "{\"status\":\"ok\",\"message\":\"Success\",\"data\":{\"active\":%s}}",
-                active ? "true" : "false");
-            HTTP_OK(c, response);
+            JsonBuilder *j = json_new();
+            json_obj_open(j);
+            json_add_str(j, "status", "ok");
+            json_add_str(j, "message", "Success");
+            json_key_obj_open(j, "data");
+            json_add_bool(j, "active", active);
+            json_obj_close(j);
+            json_obj_close(j);
+            HTTP_OK_FREE(c, json_finish(j));
         } else {
             HTTP_OK(c, "{\"status\":\"error\",\"message\":\"Failed to get data connection status\"}");
         }
@@ -1060,11 +999,17 @@ void handle_data_status(struct mg_connection *c, struct mg_http_message *hm) {
         }
 
         if (ofono_set_data_status(active) == 0) {
-            snprintf(response, sizeof(response),
-                "{\"status\":\"ok\",\"message\":\"Data connection %s successfully\",\"data\":{\"active\":%s}}",
-                active ? "enabled" : "disabled",
-                active ? "true" : "false");
-            HTTP_OK(c, response);
+            JsonBuilder *j = json_new();
+            json_obj_open(j);
+            json_add_str(j, "status", "ok");
+            char msg[64];
+            snprintf(msg, sizeof(msg), "Data connection %s successfully", active ? "enabled" : "disabled");
+            json_add_str(j, "message", msg);
+            json_key_obj_open(j, "data");
+            json_add_bool(j, "active", active);
+            json_obj_close(j);
+            json_obj_close(j);
+            HTTP_OK_FREE(c, json_finish(j));
         } else {
             HTTP_OK(c, "{\"status\":\"error\",\"message\":\"Failed to set data connection\"}");
         }
@@ -1075,18 +1020,21 @@ void handle_data_status(struct mg_connection *c, struct mg_http_message *hm) {
 
 /* GET/POST /api/roaming - 漫游开关 */
 void handle_roaming_status(struct mg_connection *c, struct mg_http_message *hm) {
-    char response[256];
-
     if (hm->method.len == 3 && memcmp(hm->method.buf, "GET", 3) == 0) {
         /* GET - 查询漫游状态 */
         int roaming_allowed = 0;
         int is_roaming = 0;
         if (ofono_get_roaming_status(&roaming_allowed, &is_roaming) == 0) {
-            snprintf(response, sizeof(response),
-                "{\"status\":\"ok\",\"message\":\"Success\",\"data\":{\"roaming_allowed\":%s,\"is_roaming\":%s}}",
-                roaming_allowed ? "true" : "false",
-                is_roaming ? "true" : "false");
-            HTTP_OK(c, response);
+            JsonBuilder *j = json_new();
+            json_obj_open(j);
+            json_add_str(j, "status", "ok");
+            json_add_str(j, "message", "Success");
+            json_key_obj_open(j, "data");
+            json_add_bool(j, "roaming_allowed", roaming_allowed);
+            json_add_bool(j, "is_roaming", is_roaming);
+            json_obj_close(j);
+            json_obj_close(j);
+            HTTP_OK_FREE(c, json_finish(j));
         } else {
             HTTP_OK(c, "{\"status\":\"error\",\"message\":\"Failed to get roaming status\"}");
         }
@@ -1107,12 +1055,18 @@ void handle_roaming_status(struct mg_connection *c, struct mg_http_message *hm) 
             int is_roaming = 0;
             ofono_get_roaming_status(&roaming_allowed, &is_roaming);
             
-            snprintf(response, sizeof(response),
-                "{\"status\":\"ok\",\"message\":\"Roaming %s successfully\",\"data\":{\"roaming_allowed\":%s,\"is_roaming\":%s}}",
-                allowed ? "enabled" : "disabled",
-                roaming_allowed ? "true" : "false",
-                is_roaming ? "true" : "false");
-            HTTP_OK(c, response);
+            JsonBuilder *j = json_new();
+            json_obj_open(j);
+            json_add_str(j, "status", "ok");
+            char msg[64];
+            snprintf(msg, sizeof(msg), "Roaming %s successfully", allowed ? "enabled" : "disabled");
+            json_add_str(j, "message", msg);
+            json_key_obj_open(j, "data");
+            json_add_bool(j, "roaming_allowed", roaming_allowed);
+            json_add_bool(j, "is_roaming", is_roaming);
+            json_obj_close(j);
+            json_obj_close(j);
+            HTTP_OK_FREE(c, json_finish(j));
         } else {
             HTTP_OK(c, "{\"status\":\"error\",\"message\":\"Failed to set roaming\"}");
         }
@@ -1269,40 +1223,20 @@ void handle_shell_execute(struct mg_connection *c, struct mg_http_message *hm) {
     }
 
     char output[8192] = {0};
-    char response[16384];
 
+    JsonBuilder *j = json_new();
+    json_obj_open(j);
     if (execute_shell(cmd, output, sizeof(output)) == 0) {
-        /* 转义输出 */
-        char escaped[8192];
-        size_t j = 0;
-        for (size_t i = 0; output[i] && j < sizeof(escaped) - 2; i++) {
-            char ch = output[i];
-            if (ch == '"' || ch == '\\') {
-                escaped[j++] = '\\';
-            } else if (ch == '\n') {
-                escaped[j++] = '\\';
-                ch = 'n';
-            } else if (ch == '\r') {
-                escaped[j++] = '\\';
-                ch = 'r';
-            } else if (ch == '\t') {
-                escaped[j++] = '\\';
-                ch = 't';
-            }
-            if ((unsigned char)ch >= 0x20 || ch == 'n' || ch == 'r' || ch == 't') {
-                escaped[j++] = ch;
-            }
-        }
-        escaped[j] = '\0';
-
-        snprintf(response, sizeof(response),
-            "{\"Code\":0,\"Error\":\"\",\"Data\":\"%s\"}", escaped);
+        json_add_int(j, "Code", 0);
+        json_add_str(j, "Error", "");
+        json_add_str(j, "Data", output);
     } else {
-        snprintf(response, sizeof(response),
-            "{\"Code\":1,\"Error\":\"命令执行失败\",\"Data\":\"%s\"}", output);
+        json_add_int(j, "Code", 1);
+        json_add_str(j, "Error", "命令执行失败");
+        json_add_str(j, "Data", output);
     }
-
-    HTTP_OK(c, response);
+    json_obj_close(j);
+    HTTP_OK_FREE(c, json_finish(j));
 }
 
 /* GET /api/plugins - 获取插件列表 */
@@ -1317,11 +1251,16 @@ void handle_plugin_list(struct mg_connection *c, struct mg_http_message *hm) {
 
     int count = get_plugin_list(json, 512 * 1024);
     
-    char response[512 * 1024 + 128];
-    snprintf(response, sizeof(response),
-        "{\"Code\":0,\"Error\":\"\",\"Data\":%s,\"Count\":%d}", json, count);
+    /* 使用JSON Builder构建外层响应 */
+    JsonBuilder *j = json_new();
+    json_obj_open(j);
+    json_add_int(j, "Code", 0);
+    json_add_str(j, "Error", "");
+    json_add_raw(j, "Data", json);  /* 插件列表已是JSON数组 */
+    json_add_int(j, "Count", count);
+    json_obj_close(j);
     
-    HTTP_OK(c, response);
+    HTTP_OK_FREE(c, json_finish(j));
     free(json);
 }
 
@@ -1338,7 +1277,13 @@ void handle_plugin_upload(struct mg_connection *c, struct mg_http_message *hm) {
 
     char *content_str = mg_json_get_str(hm->body, "$.content");
     if (!content_str) {
-        HTTP_OK(c, "{\"Code\":1,\"Error\":\"插件内容不能为空\",\"Data\":null}");
+        JsonBuilder *j = json_new();
+        json_obj_open(j);
+        json_add_int(j, "Code", 1);
+        json_add_str(j, "Error", "插件内容不能为空");
+        json_add_null(j, "Data");
+        json_obj_close(j);
+        HTTP_OK_FREE(c, json_finish(j));
         return;
     }
 
@@ -1347,11 +1292,19 @@ void handle_plugin_upload(struct mg_connection *c, struct mg_http_message *hm) {
         strcpy(name, "plugin");
     }
 
+    JsonBuilder *j = json_new();
+    json_obj_open(j);
     if (save_plugin(name, content_str) == 0) {
-        HTTP_OK(c, "{\"Code\":0,\"Error\":\"\",\"Data\":\"插件上传成功\"}");
+        json_add_int(j, "Code", 0);
+        json_add_str(j, "Error", "");
+        json_add_str(j, "Data", "插件上传成功");
     } else {
-        HTTP_OK(c, "{\"Code\":1,\"Error\":\"插件保存失败\",\"Data\":null}");
+        json_add_int(j, "Code", 1);
+        json_add_str(j, "Error", "插件保存失败");
+        json_add_null(j, "Data");
     }
+    json_obj_close(j);
+    HTTP_OK_FREE(c, json_finish(j));
 
     free(content_str);
 }
@@ -1387,22 +1340,38 @@ void handle_plugin_delete(struct mg_connection *c, struct mg_http_message *hm) {
     char name[256] = {0};
     mg_url_decode(encoded_name, strlen(encoded_name), name, sizeof(name), 0);
 
+    JsonBuilder *j = json_new();
+    json_obj_open(j);
     if (delete_plugin(name) == 0) {
-        HTTP_OK(c, "{\"Code\":0,\"Error\":\"\",\"Data\":\"插件删除成功\"}");
+        json_add_int(j, "Code", 0);
+        json_add_str(j, "Error", "");
+        json_add_str(j, "Data", "插件删除成功");
     } else {
-        HTTP_OK(c, "{\"Code\":1,\"Error\":\"插件删除失败\",\"Data\":null}");
+        json_add_int(j, "Code", 1);
+        json_add_str(j, "Error", "插件删除失败");
+        json_add_null(j, "Data");
     }
+    json_obj_close(j);
+    HTTP_OK_FREE(c, json_finish(j));
 }
 
 /* DELETE /api/plugins/all - 删除所有插件 */
 void handle_plugin_delete_all(struct mg_connection *c, struct mg_http_message *hm) {
     HTTP_CHECK_DELETE(c, hm);
 
+    JsonBuilder *j = json_new();
+    json_obj_open(j);
     if (delete_all_plugins() == 0) {
-        HTTP_OK(c, "{\"Code\":0,\"Error\":\"\",\"Data\":\"所有插件已删除\"}");
+        json_add_int(j, "Code", 0);
+        json_add_str(j, "Error", "");
+        json_add_str(j, "Data", "所有插件已删除");
     } else {
-        HTTP_OK(c, "{\"Code\":1,\"Error\":\"删除失败\",\"Data\":null}");
+        json_add_int(j, "Code", 1);
+        json_add_str(j, "Error", "删除失败");
+        json_add_null(j, "Data");
     }
+    json_obj_close(j);
+    HTTP_OK_FREE(c, json_finish(j));
 }
 
 /* ==================== 脚本管理 API ==================== */
@@ -1446,20 +1415,9 @@ void handle_script_list(struct mg_connection *c, struct mg_http_message *hm) {
                         fclose(f);
                     }
 
-                    /* 转义内容 */
+                    /* 使用mongoose MG_ESC进行JSON转义 */
                     char escaped[65536];
-                    size_t j = 0;
-                    for (size_t i = 0; content[i] && j < sizeof(escaped) - 2; i++) {
-                        char ch = content[i];
-                        if (ch == '"' || ch == '\\') { escaped[j++] = '\\'; }
-                        else if (ch == '\n') { escaped[j++] = '\\'; ch = 'n'; }
-                        else if (ch == '\r') { escaped[j++] = '\\'; ch = 'r'; }
-                        else if (ch == '\t') { escaped[j++] = '\\'; ch = 't'; }
-                        if ((unsigned char)ch >= 0x20 || ch == 'n' || ch == 'r' || ch == 't') {
-                            escaped[j++] = ch;
-                        }
-                    }
-                    escaped[j] = '\0';
+                    mg_snprintf(escaped, sizeof(escaped), "%m", MG_ESC(content));
 
                     char item[70000];
                     snprintf(item, sizeof(item),
@@ -1476,11 +1434,16 @@ void handle_script_list(struct mg_connection *c, struct mg_http_message *hm) {
 
     strcat(json, "]");
 
-    char response[256 * 1024 + 128];
-    snprintf(response, sizeof(response),
-        "{\"Code\":0,\"Error\":\"\",\"Data\":%s,\"Count\":%d}", json, count);
+    /* 使用JSON Builder构建外层响应 */
+    JsonBuilder *j = json_new();
+    json_obj_open(j);
+    json_add_int(j, "Code", 0);
+    json_add_str(j, "Error", "");
+    json_add_raw(j, "Data", json);
+    json_add_int(j, "Count", count);
+    json_obj_close(j);
     
-    HTTP_OK(c, response);
+    HTTP_OK_FREE(c, json_finish(j));
     free(json);
 }
 
@@ -1497,12 +1460,24 @@ void handle_script_upload(struct mg_connection *c, struct mg_http_message *hm) {
 
     char *content_str = mg_json_get_str(hm->body, "$.content");
     if (!content_str) {
-        HTTP_OK(c, "{\"Code\":1,\"Error\":\"脚本内容不能为空\",\"Data\":null}");
+        JsonBuilder *j = json_new();
+        json_obj_open(j);
+        json_add_int(j, "Code", 1);
+        json_add_str(j, "Error", "脚本内容不能为空");
+        json_add_null(j, "Data");
+        json_obj_close(j);
+        HTTP_OK_FREE(c, json_finish(j));
         return;
     }
 
     if (strlen(name) == 0) {
-        HTTP_OK(c, "{\"Code\":1,\"Error\":\"脚本名称不能为空\",\"Data\":null}");
+        JsonBuilder *j = json_new();
+        json_obj_open(j);
+        json_add_int(j, "Code", 1);
+        json_add_str(j, "Error", "脚本名称不能为空");
+        json_add_null(j, "Data");
+        json_obj_close(j);
+        HTTP_OK_FREE(c, json_finish(j));
         free(content_str);
         return;
     }
@@ -1516,6 +1491,8 @@ void handle_script_upload(struct mg_connection *c, struct mg_http_message *hm) {
     char filepath[512];
     snprintf(filepath, sizeof(filepath), "%s/%s", SCRIPTS_DIR, name);
     
+    JsonBuilder *j = json_new();
+    json_obj_open(j);
     FILE *f = fopen(filepath, "w");
     if (f) {
         fputs(content_str, f);
@@ -1524,10 +1501,16 @@ void handle_script_upload(struct mg_connection *c, struct mg_http_message *hm) {
         char chmod_cmd[512];
         snprintf(chmod_cmd, sizeof(chmod_cmd), "chmod +x %s", filepath);
         system(chmod_cmd);
-        HTTP_OK(c, "{\"Code\":0,\"Error\":\"\",\"Data\":\"脚本上传成功\"}");
+        json_add_int(j, "Code", 0);
+        json_add_str(j, "Error", "");
+        json_add_str(j, "Data", "脚本上传成功");
     } else {
-        HTTP_OK(c, "{\"Code\":1,\"Error\":\"脚本保存失败\",\"Data\":null}");
+        json_add_int(j, "Code", 1);
+        json_add_str(j, "Error", "脚本保存失败");
+        json_add_null(j, "Data");
     }
+    json_obj_close(j);
+    HTTP_OK_FREE(c, json_finish(j));
 
     free(content_str);
 }
@@ -1560,21 +1543,35 @@ void handle_script_update(struct mg_connection *c, struct mg_http_message *hm) {
 
     char *content_str = mg_json_get_str(hm->body, "$.content");
     if (!content_str) {
-        HTTP_OK(c, "{\"Code\":1,\"Error\":\"脚本内容不能为空\",\"Data\":null}");
+        JsonBuilder *j = json_new();
+        json_obj_open(j);
+        json_add_int(j, "Code", 1);
+        json_add_str(j, "Error", "脚本内容不能为空");
+        json_add_null(j, "Data");
+        json_obj_close(j);
+        HTTP_OK_FREE(c, json_finish(j));
         return;
     }
 
     char filepath[512];
     snprintf(filepath, sizeof(filepath), "%s/%s", SCRIPTS_DIR, name);
     
+    JsonBuilder *j = json_new();
+    json_obj_open(j);
     FILE *f = fopen(filepath, "w");
     if (f) {
         fputs(content_str, f);
         fclose(f);
-        HTTP_OK(c, "{\"Code\":0,\"Error\":\"\",\"Data\":\"脚本更新成功\"}");
+        json_add_int(j, "Code", 0);
+        json_add_str(j, "Error", "");
+        json_add_str(j, "Data", "脚本更新成功");
     } else {
-        HTTP_OK(c, "{\"Code\":1,\"Error\":\"脚本更新失败\",\"Data\":null}");
+        json_add_int(j, "Code", 1);
+        json_add_str(j, "Error", "脚本更新失败");
+        json_add_null(j, "Data");
     }
+    json_obj_close(j);
+    HTTP_OK_FREE(c, json_finish(j));
 
     free(content_str);
 }
@@ -1611,11 +1608,19 @@ void handle_script_delete(struct mg_connection *c, struct mg_http_message *hm) {
     char filepath[512];
     snprintf(filepath, sizeof(filepath), "%s/%s", SCRIPTS_DIR, name);
     
+    JsonBuilder *j = json_new();
+    json_obj_open(j);
     if (remove(filepath) == 0) {
-        HTTP_OK(c, "{\"Code\":0,\"Error\":\"\",\"Data\":\"脚本删除成功\"}");
+        json_add_int(j, "Code", 0);
+        json_add_str(j, "Error", "");
+        json_add_str(j, "Data", "脚本删除成功");
     } else {
-        HTTP_OK(c, "{\"Code\":1,\"Error\":\"脚本删除失败\",\"Data\":null}");
+        json_add_int(j, "Code", 1);
+        json_add_str(j, "Error", "脚本删除失败");
+        json_add_null(j, "Data");
     }
+    json_obj_close(j);
+    HTTP_OK_FREE(c, json_finish(j));
 }
 
 /* ==================== 插件存储 API ==================== */
@@ -1653,16 +1658,21 @@ void handle_plugin_storage_get(struct mg_connection *c, struct mg_http_message *
         return;
     }
 
-    char json_data[PLUGIN_STORAGE_MAX_SIZE + 256];
     char storage_content[PLUGIN_STORAGE_MAX_SIZE];
     
+    JsonBuilder *j = json_new();
+    json_obj_open(j);
     if (plugin_storage_read(plugin_name, storage_content, sizeof(storage_content)) == 0) {
-        snprintf(json_data, sizeof(json_data), 
-            "{\"Code\":0,\"Error\":\"\",\"Data\":%s}", storage_content);
-        HTTP_OK(c, json_data);
+        json_add_int(j, "Code", 0);
+        json_add_str(j, "Error", "");
+        json_add_raw(j, "Data", storage_content);
     } else {
-        HTTP_OK(c, "{\"Code\":1,\"Error\":\"读取存储失败\",\"Data\":null}");
+        json_add_int(j, "Code", 1);
+        json_add_str(j, "Error", "读取存储失败");
+        json_add_null(j, "Data");
     }
+    json_obj_close(j);
+    HTTP_OK_FREE(c, json_finish(j));
 }
 
 /* POST /api/plugins/storage/:name - 写入插件存储 */
@@ -1681,11 +1691,19 @@ void handle_plugin_storage_set(struct mg_connection *c, struct mg_http_message *
     memcpy(json_data, hm->body.buf, len);
     json_data[len] = '\0';
 
+    JsonBuilder *j = json_new();
+    json_obj_open(j);
     if (plugin_storage_write(plugin_name, json_data) == 0) {
-        HTTP_OK(c, "{\"Code\":0,\"Error\":\"\",\"Data\":\"存储成功\"}");
+        json_add_int(j, "Code", 0);
+        json_add_str(j, "Error", "");
+        json_add_str(j, "Data", "存储成功");
     } else {
-        HTTP_OK(c, "{\"Code\":1,\"Error\":\"存储失败，可能超出大小限制(64KB)\",\"Data\":null}");
+        json_add_int(j, "Code", 1);
+        json_add_str(j, "Error", "存储失败，可能超出大小限制(64KB)");
+        json_add_null(j, "Data");
     }
+    json_obj_close(j);
+    HTTP_OK_FREE(c, json_finish(j));
 }
 
 /* DELETE /api/plugins/storage/:name - 删除插件存储 */
@@ -1698,11 +1716,19 @@ void handle_plugin_storage_delete(struct mg_connection *c, struct mg_http_messag
         return;
     }
 
+    JsonBuilder *j = json_new();
+    json_obj_open(j);
     if (plugin_storage_delete(plugin_name) == 0) {
-        HTTP_OK(c, "{\"Code\":0,\"Error\":\"\",\"Data\":\"删除成功\"}");
+        json_add_int(j, "Code", 0);
+        json_add_str(j, "Error", "");
+        json_add_str(j, "Data", "删除成功");
     } else {
-        HTTP_OK(c, "{\"Code\":1,\"Error\":\"删除失败\",\"Data\":null}");
+        json_add_int(j, "Code", 1);
+        json_add_str(j, "Error", "删除失败");
+        json_add_null(j, "Data");
     }
+    json_obj_close(j);
+    HTTP_OK_FREE(c, json_finish(j));
 }
 
 
@@ -1715,7 +1741,6 @@ void handle_auth_login(struct mg_connection *c, struct mg_http_message *hm) {
 
     char password[128] = {0};
     char token[AUTH_TOKEN_SIZE] = {0};
-    char response[256];
     
     /* 解析密码 */
     char *pwd_str = mg_json_get_str(hm->body, "$.password");
@@ -1733,9 +1758,13 @@ void handle_auth_login(struct mg_connection *c, struct mg_http_message *hm) {
     int ret = auth_login(password, token, sizeof(token));
     
     if (ret == 0) {
-        snprintf(response, sizeof(response),
-            "{\"status\":\"success\",\"message\":\"登录成功\",\"token\":\"%s\"}", token);
-        HTTP_OK(c, response);
+        JsonBuilder *j = json_new();
+        json_obj_open(j);
+        json_add_str(j, "status", "success");
+        json_add_str(j, "message", "登录成功");
+        json_add_str(j, "token", token);
+        json_obj_close(j);
+        HTTP_OK_FREE(c, json_finish(j));
     } else if (ret == -1) {
         HTTP_JSON(c, 401, "{\"status\":\"error\",\"message\":\"密码错误\"}");
     } else {
@@ -1817,7 +1846,6 @@ void handle_auth_status(struct mg_connection *c, struct mg_http_message *hm) {
 
     int logged_in = 0;
     int required = auth_is_required();
-    char response[128];
     
     /* 从Authorization头获取token并验证 */
     struct mg_str *auth_header = mg_http_get_header(hm, "Authorization");
@@ -1837,12 +1865,12 @@ void handle_auth_status(struct mg_connection *c, struct mg_http_message *hm) {
         }
     }
     
-    snprintf(response, sizeof(response),
-        "{\"logged_in\":%s,\"auth_required\":%s}",
-        logged_in ? "true" : "false",
-        required ? "true" : "false");
-    
-    HTTP_OK(c, response);
+    JsonBuilder *j = json_new();
+    json_obj_open(j);
+    json_add_bool(j, "logged_in", logged_in);
+    json_add_bool(j, "auth_required", required);
+    json_obj_close(j);
+    HTTP_OK_FREE(c, json_finish(j));
 }
 
 /* ==================== APN 配置管理 ==================== */
@@ -1853,15 +1881,8 @@ void handle_apn_config_get(struct mg_connection *c, struct mg_http_message *hm) 
     
     ApnConfig config;
     ApnTemplateStatus tpl_status;
-    char *response = (char *)malloc(4096);
-    
-    if (!response) {
-        HTTP_ERROR(c, 500, "内存分配失败");
-        return;
-    }
     
     if (apn_get_config(&config) != 0) {
-        free(response);
         HTTP_ERROR(c, 500, "获取配置失败");
         return;
     }
@@ -1874,32 +1895,35 @@ void handle_apn_config_get(struct mg_connection *c, struct mg_http_message *hm) 
         }
     }
     
+    JsonBuilder *j = json_new();
+    json_obj_open(j);
+    json_add_str(j, "status", "ok");
+    json_add_str(j, "message", "");
+    json_key_obj_open(j, "data");
+    json_add_int(j, "mode", config.mode);
+    json_add_int(j, "template_id", config.template_id);
+    json_add_int(j, "auto_start", config.auto_start);
+    
     if (has_template) {
-        /* 转义模板名称中的特殊字符 */
-        char escaped_name[512];
-        char escaped_apn[512];
-        json_escape_string(tpl_status.template.name, escaped_name, sizeof(escaped_name));
-        json_escape_string(tpl_status.template.apn, escaped_apn, sizeof(escaped_apn));
-        
-        snprintf(response, 4096,
-            "{\"status\":\"ok\",\"message\":\"\",\"data\":{"
-            "\"mode\":%d,\"template_id\":%d,\"auto_start\":%d,"
-            "\"template\":{\"id\":%d,\"name\":\"%s\",\"apn\":\"%s\",\"protocol\":\"%s\","
-            "\"username\":\"%s\",\"password\":\"%s\",\"auth_method\":\"%s\","
-            "\"is_applied\":%d,\"is_active\":%d,\"applied_context\":\"%s\"}}}",
-            config.mode, config.template_id, config.auto_start,
-            tpl_status.template.id, escaped_name, escaped_apn, tpl_status.template.protocol,
-            tpl_status.template.username, tpl_status.template.password, tpl_status.template.auth_method,
-            tpl_status.is_applied, tpl_status.is_active, tpl_status.applied_context);
+        json_key_obj_open(j, "template");
+        json_add_int(j, "id", tpl_status.template.id);
+        json_add_str(j, "name", tpl_status.template.name);
+        json_add_str(j, "apn", tpl_status.template.apn);
+        json_add_str(j, "protocol", tpl_status.template.protocol);
+        json_add_str(j, "username", tpl_status.template.username);
+        json_add_str(j, "password", tpl_status.template.password);
+        json_add_str(j, "auth_method", tpl_status.template.auth_method);
+        json_add_int(j, "is_applied", tpl_status.is_applied);
+        json_add_int(j, "is_active", tpl_status.is_active);
+        json_add_str(j, "applied_context", tpl_status.applied_context);
+        json_obj_close(j);
     } else {
-        snprintf(response, 4096,
-            "{\"status\":\"ok\",\"message\":\"\",\"data\":{"
-            "\"mode\":%d,\"template_id\":%d,\"auto_start\":%d,\"template\":null}}",
-            config.mode, config.template_id, config.auto_start);
+        json_add_null(j, "template");
     }
     
-    HTTP_OK(c, response);
-    free(response);
+    json_obj_close(j);
+    json_obj_close(j);
+    HTTP_OK_FREE(c, json_finish(j));
 }
 
 /* POST /api/apn/config - 设置APN配置 */
@@ -1936,38 +1960,28 @@ void handle_apn_templates_list(struct mg_connection *c, struct mg_http_message *
         return;
     }
     
-    /* 构建JSON响应 */
-    char *response = (char *)malloc(64 * 1024);
-    if (!response) {
-        HTTP_ERROR(c, 500, "内存分配失败");
-        return;
-    }
-    
-    char *p = response;
-    p += sprintf(p, "{\"status\":\"ok\",\"message\":\"\",\"data\":[");
+    JsonBuilder *j = json_new();
+    json_obj_open(j);
+    json_add_str(j, "status", "ok");
+    json_add_str(j, "message", "");
+    json_arr_open(j, "data");
     
     for (int i = 0; i < count; i++) {
-        char escaped_name[512];
-        char escaped_apn[512];
-        char escaped_username[512];
-        char escaped_password[512];
-        
-        json_escape_string(templates[i].name, escaped_name, sizeof(escaped_name));
-        json_escape_string(templates[i].apn, escaped_apn, sizeof(escaped_apn));
-        json_escape_string(templates[i].username, escaped_username, sizeof(escaped_username));
-        json_escape_string(templates[i].password, escaped_password, sizeof(escaped_password));
-        
-        p += sprintf(p, "%s{\"id\":%d,\"name\":\"%s\",\"apn\":\"%s\",\"protocol\":\"%s\","
-                     "\"username\":\"%s\",\"password\":\"%s\",\"auth_method\":\"%s\",\"created_at\":%ld}",
-                     i > 0 ? "," : "",
-                     templates[i].id, escaped_name, escaped_apn, templates[i].protocol,
-                     escaped_username, escaped_password, templates[i].auth_method,
-                     (long)templates[i].created_at);
+        json_arr_obj_open(j);
+        json_add_int(j, "id", templates[i].id);
+        json_add_str(j, "name", templates[i].name);
+        json_add_str(j, "apn", templates[i].apn);
+        json_add_str(j, "protocol", templates[i].protocol);
+        json_add_str(j, "username", templates[i].username);
+        json_add_str(j, "password", templates[i].password);
+        json_add_str(j, "auth_method", templates[i].auth_method);
+        json_add_long(j, "created_at", (long)templates[i].created_at);
+        json_obj_close(j);
     }
     
-    sprintf(p, "]}");
-    HTTP_OK(c, response);
-    free(response);
+    json_arr_close(j);
+    json_obj_close(j);
+    HTTP_OK_FREE(c, json_finish(j));
 }
 
 /* POST /api/apn/templates - 创建模板 */

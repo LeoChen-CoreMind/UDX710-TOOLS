@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file reboot.c
  * @brief 定时重启实现 (Go: handlers/reboot.go)
  */
@@ -12,10 +12,11 @@
 #include "reboot.h"
 #include "exec_utils.h"
 #include "http_utils.h"
+#include "json_builder.h"
 
 #define CRON_FILE "/var/spool/cron/crontabs/root"
 
-/* 读取第一个重启任务 */
+/* 读取第一个重启任�?*/
 static int read_first_reboot_job(char *job, size_t size) {
     FILE *f = fopen(CRON_FILE, "r");
     if (!f) return -1;
@@ -25,7 +26,7 @@ static int read_first_reboot_job(char *job, size_t size) {
         if (strstr(line, "/sbin/reboot")) {
             strncpy(job, line, size - 1);
             job[size - 1] = '\0';
-            /* 去除换行符 */
+            /* 去除换行�?*/
             size_t len = strlen(job);
             if (len > 0 && job[len - 1] == '\n') job[len - 1] = '\0';
             fclose(f);
@@ -49,16 +50,13 @@ void handle_get_first_reboot(struct mg_connection *c, struct mg_http_message *hm
 
     int found = (read_first_reboot_job(job, sizeof(job)) == 0 && strlen(job) > 0);
 
-    char json[512];
-    if (found) {
-        snprintf(json, sizeof(json),
-            "{\"success\":true,\"job\":\"%s\",\"time\":\"%s\"}", job, time_str);
-    } else {
-        snprintf(json, sizeof(json),
-            "{\"success\":false,\"job\":\"\",\"time\":\"%s\"}", time_str);
-    }
-
-    HTTP_OK(c, json);
+    JsonBuilder *j = json_new();
+    json_obj_open(j);
+    json_add_bool(j, "success", found);
+    json_add_str(j, "job", job);
+    json_add_str(j, "time", time_str);
+    json_obj_close(j);
+    HTTP_OK_FREE(c, json_finish(j));
 }
 
 /* GET /api/set/reboot - 设置定时重启 */
@@ -94,14 +92,24 @@ void handle_set_reboot(struct mg_connection *c, struct mg_http_message *hm) {
     snprintf(cmd, sizeof(cmd), "sed -i '/reboot/d' %s 2>/dev/null || true", CRON_FILE);
     run_command(output, sizeof(output), "sh", "-c", cmd, NULL);
 
-    /* 添加新任务 */
+    /* 添加新任�?*/
     snprintf(cmd, sizeof(cmd), "echo '%s %s * * %s /sbin/reboot' >> %s", minute, hour, day, CRON_FILE);
     if (run_command(output, sizeof(output), "sh", "-c", cmd, NULL) != 0) {
-        HTTP_JSON(c, 500, "{\"success\":false,\"msg\":\"Failed to add job\"}");
+        JsonBuilder *j = json_new();
+        json_obj_open(j);
+        json_add_bool(j, "success", 0);
+        json_add_str(j, "msg", "Failed to add job");
+        json_obj_close(j);
+        HTTP_JSON_FREE(c, 500, json_finish(j));
         return;
     }
 
-    HTTP_OK(c, "{\"success\":true,\"msg\":\"Reboot job added\"}");
+    JsonBuilder *j = json_new();
+    json_obj_open(j);
+    json_add_bool(j, "success", 1);
+    json_add_str(j, "msg", "Reboot job added");
+    json_obj_close(j);
+    HTTP_OK_FREE(c, json_finish(j));
 }
 
 /* GET /api/claen/cron - 清除定时任务 */
@@ -113,5 +121,10 @@ void handle_clear_cron(struct mg_connection *c, struct mg_http_message *hm) {
     snprintf(cmd, sizeof(cmd), "sed -i '/reboot/d' %s 2>/dev/null || true", CRON_FILE);
     run_command(output, sizeof(output), "sh", "-c", cmd, NULL);
 
-    HTTP_OK(c, "{\"success\":true,\"msg\":\"Clean Reboot\"}");
+    JsonBuilder *j = json_new();
+    json_obj_open(j);
+    json_add_bool(j, "success", 1);
+    json_add_str(j, "msg", "Clean Reboot");
+    json_obj_close(j);
+    HTTP_OK_FREE(c, json_finish(j));
 }
