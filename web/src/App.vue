@@ -170,6 +170,13 @@ function handleLogout() {
   stopRefreshInterval()
 }
 
+// 密码重置成功处理
+function handlePasswordResetSuccess() {
+  showForgotModal.value = false
+  showLoginModal.value = true
+  loginPassword.value = 'admin'
+}
+
 // 跳转到更新页面
 function handleGoUpdate() {
   activeMenu.value = 'update'
@@ -498,7 +505,7 @@ onUnmounted(() => {
     <ForgotPasswordModal 
       v-if="showForgotModal" 
       @close="showForgotModal = false; showLoginModal = true"
-      @reset-success="showForgotModal = false; showLoginModal = true"
+      @reset-success="handlePasswordResetSuccess"
     />
     
     <!-- 移动端遮罩层 -->

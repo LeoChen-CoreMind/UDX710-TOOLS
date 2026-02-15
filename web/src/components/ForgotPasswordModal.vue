@@ -55,7 +55,6 @@ async function handleReset() {
     if (res.status === 'ok') {
       success(t('security.resetPasswordSuccess'))
       emit('reset-success')
-      emit('close')
     } else {
       showError(res.message || t('security.resetPasswordFailed'))
     }
@@ -69,7 +68,7 @@ async function handleReset() {
 
 <template>
   <!-- 遮罩层 -->
-  <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm" @click.self="$emit('close')">
+  <div class="fixed inset-0 z-[110] flex items-center justify-center bg-black/50 backdrop-blur-sm" @click.self="$emit('close')">
     <div class="w-full max-w-md mx-4 rounded-2xl bg-white dark:bg-slate-800 shadow-2xl overflow-hidden">
       <!-- 标题栏 -->
       <div class="px-6 py-4 bg-gradient-to-r from-amber-500 to-orange-400 flex items-center justify-between">

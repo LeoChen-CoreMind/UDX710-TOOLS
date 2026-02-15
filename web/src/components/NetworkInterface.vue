@@ -105,6 +105,7 @@ async function fetchStats(ifname) {
     statsData.value[ifname] = data
   } catch (err) {
     console.error(`获取${ifname}流量统计失败:`, err)
+    throw err
   }
 }
 
@@ -128,10 +129,18 @@ async function toggleMonitor(iface) {
 
 // 刷新监听中的接口数据
 async function refreshMonitoringStats() {
+  let hasError = false
   for (const iface of interfaces.value) {
     if (iface.monitoring) {
-      await fetchStats(iface.name)
+      try {
+        await fetchStats(iface.name)
+      } catch (err) {
+        hasError = true
+      }
     }
+  }
+  if (hasError) {
+    await fetchInterfaces()
   }
 }
 
