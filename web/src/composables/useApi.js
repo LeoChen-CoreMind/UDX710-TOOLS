@@ -154,12 +154,17 @@ export async function getTrafficConfig() {
 }
 
 // 设置流量限制
-export async function setTrafficLimit(enabled, limitGB) {
+export async function setTrafficLimit(enabled, limitGB, resetEnabled = false, resetDay = 1) {
   const switchValue = enabled ? 1 : 0
   const muchValue = Math.round(limitGB * 1073741824) // GB转字节
   return request('/api/set/total', {
     method: 'POST',
-    body: JSON.stringify({ switch: switchValue, much: muchValue })
+    body: JSON.stringify({
+      switch: switchValue,
+      much: muchValue,
+      reset_enabled: resetEnabled ? 1 : 0,
+      reset_day: parseInt(resetDay) || 1
+    })
   })
 }
 
