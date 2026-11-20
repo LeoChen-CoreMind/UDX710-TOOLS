@@ -13,10 +13,15 @@ const { confirm } = useConfirm()
 const uploadBytes = ref(0)
 const downloadBytes = ref(0)
 const totalBytes = ref(0)
+const cumUploadBytes = ref(0)
+const cumDownloadBytes = ref(0)
+const cumTotalBytes = ref(0)
 
 // 配置
 const limitEnabled = ref(false)
 const limitValue = ref('')
+const resetEnabled = ref(false)
+const resetDay = ref(1)
 const saving = ref(false)
 const clearing = ref(false)
 
@@ -53,10 +58,13 @@ const usagePercent = computed(() => {
 async function fetchTrafficData() {
   try {
     const data = await getTrafficTotal()
-    // 解析流量数据（rx=下载, tx=上传）
+    // 解析流量数据
     uploadBytes.value = parseTrafficValue(data.tx)
     downloadBytes.value = parseTrafficValue(data.rx)
     totalBytes.value = parseTrafficValue(data.total)
+    cumUploadBytes.value = parseTrafficValue(data.cum_tx)
+    cumDownloadBytes.value = parseTrafficValue(data.cum_rx)
+    cumTotalBytes.value = parseTrafficValue(data.cum_total)
   } catch (error) {
     console.error('获取流量数据失败:', error)
   }
@@ -69,7 +77,11 @@ async function fetchConfig() {
     if (config.switch === 1) {
       limitEnabled.value = true
       limitValue.value = (config.much / 1073741824).toFixed(2)
+    } else {
+      limitEnabled.value = false
     }
+    resetEnabled.value = config.reset_enabled === 1
+    resetDay.value = config.reset_day || 1
   } catch (error) {
     console.error('获取配置失败:', error)
   }
@@ -81,10 +93,15 @@ async function saveConfig() {
     error(t('traffic.enterValidLimit'))
     return
   }
+  if (resetEnabled.value && (resetDay.value < 1 || resetDay.value > 31)) {
+    error(t('traffic.enterValidResetDay', '请输入正确的重置日期（1-31）'))
+    return
+  }
   saving.value = true
   try {
-    await setTrafficLimit(limitEnabled.value, parseFloat(limitValue.value) || 0)
+    await setTrafficLimit(limitEnabled.value, parseFloat(limitValue.value) || 0, resetEnabled.value, resetDay.value)
     success(t('traffic.saveSuccess'))
+    await fetchTrafficData() // Refresh data as offsets might have changed
   } catch (err) {
     error(t('traffic.saveFailed') + ': ' + err.message)
   } finally {
@@ -165,6 +182,7 @@ onUnmounted(() => {
       </div>
 
       <!-- 总流量 -->
+      <!-- 总流量 -->
       <div class="relative overflow-hidden rounded-2xl bg-gradient-to-br from-orange-100 to-amber-100 dark:from-orange-500/20 dark:to-amber-500/20 border border-slate-200/60 dark:border-white/10 p-6 shadow-lg shadow-orange-200/50 dark:shadow-black/20 hover:shadow-xl hover:shadow-orange-300/60 dark:hover:shadow-black/30 transition-all duration-300">
         <div class="absolute top-0 right-0 w-32 h-32 bg-orange-500/10 rounded-full -translate-y-1/2 translate-x-1/2"></div>
         <div class="relative">
@@ -179,7 +197,26 @@ onUnmounted(() => {
           </div>
           <div class="flex items-center text-green-600 dark:text-green-400 text-sm">
             <i class="fas fa-clock mr-1"></i>
-            <span>{{ t('traffic.monthlyTotal') }}</span>
+            <span>{{ resetEnabled ? t('traffic.monthlyTotal') : t('traffic.allTime') }}</span>
+          </div>
+        </div>
+      </div>
+      <!-- 累计总流量 (仅开启每月清零时显示) -->
+      <div v-if="resetEnabled" class="relative overflow-hidden rounded-2xl bg-gradient-to-br from-indigo-100 to-purple-100 dark:from-indigo-500/20 dark:to-purple-500/20 border border-slate-200/60 dark:border-white/10 p-6 shadow-lg shadow-indigo-200/50 dark:shadow-black/20 hover:shadow-xl hover:shadow-indigo-300/60 dark:hover:shadow-black/30 transition-all duration-300">
+        <div class="absolute top-0 right-0 w-32 h-32 bg-indigo-500/10 rounded-full -translate-y-1/2 translate-x-1/2"></div>
+        <div class="relative">
+          <div class="flex items-center space-x-3 mb-4">
+            <div class="w-12 h-12 rounded-xl bg-gradient-to-br from-indigo-500 to-purple-400 flex items-center justify-center shadow-lg shadow-indigo-500/30">
+              <i class="fas fa-layer-group text-white text-lg"></i>
+            </div>
+            <div>
+              <p class="text-slate-500 dark:text-white/50 text-sm">{{ t('traffic.cumTotalTraffic') }}</p>
+              <p class="text-slate-900 dark:text-white font-bold text-2xl">{{ formatBytes(cumTotalBytes) }}</p>
+            </div>
+          </div>
+          <div class="flex items-center text-purple-600 dark:text-purple-400 text-sm">
+            <i class="fas fa-history mr-1"></i>
+            <span>{{ t('traffic.allTime') }}</span>
           </div>
         </div>
       </div>
@@ -254,6 +291,39 @@ onUnmounted(() => {
             <div class="w-14 h-7 bg-slate-300 dark:bg-white/20 rounded-full peer peer-checked:bg-green-500 transition-colors"></div>
             <div class="absolute top-0.5 left-0.5 w-6 h-6 bg-white rounded-full shadow transition-transform peer-checked:translate-x-7"></div>
           </label>
+        </div>
+
+        <!-- 每月清零开关 -->
+        <div class="flex items-center justify-between p-4 bg-slate-100 dark:bg-white/5 rounded-xl mb-4">
+          <div class="flex items-center space-x-3">
+            <div class="w-10 h-10 rounded-lg bg-indigo-500/20 flex items-center justify-center">
+              <i class="fas fa-calendar-check text-indigo-400"></i>
+            </div>
+            <div>
+              <p class="text-slate-900 dark:text-white font-medium">{{ t('traffic.monthlyReset') }}</p>
+              <p class="text-slate-500 dark:text-white/50 text-sm">{{ t('traffic.monthlyResetDesc') }}</p>
+            </div>
+          </div>
+          <label class="relative cursor-pointer">
+            <input type="checkbox" v-model="resetEnabled" class="sr-only peer">
+            <div class="w-14 h-7 bg-slate-300 dark:bg-white/20 rounded-full peer peer-checked:bg-indigo-500 transition-colors"></div>
+            <div class="absolute top-0.5 left-0.5 w-6 h-6 bg-white rounded-full shadow transition-transform peer-checked:translate-x-7"></div>
+          </label>
+        </div>
+
+        <!-- 结算日输入 -->
+        <div class="mb-6" v-if="resetEnabled">
+          <label class="block text-slate-600 dark:text-white/60 text-sm mb-2">{{ t('traffic.resetDay') }}</label>
+          <div class="flex items-center space-x-3">
+            <input
+              type="number"
+              v-model="resetDay"
+              min="1" max="31"
+              :placeholder="t('traffic.enterResetDay')"
+              class="flex-1 px-4 py-3 bg-slate-100 dark:bg-white/10 border border-slate-300 dark:border-white/20 rounded-xl text-slate-900 dark:text-white placeholder-slate-400 dark:placeholder-white/30 focus:border-indigo-400 focus:ring-2 focus:ring-indigo-400/20 transition-all"
+            >
+            <span class="text-slate-600 dark:text-white/60 font-medium">{{ t('traffic.dayOfMonth') }}</span>
+          </div>
         </div>
 
         <!-- 限制值输入 -->
